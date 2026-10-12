@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Outils énergétiques</title>
+<style>
+:root{--bg:#f6f7f8;--card:#fff;--ink:#1c2228;--mute:#5f6b76;--line:#e1e5e9;--acc:#1f6f5c}
+@media (prefers-color-scheme:dark){:root{--bg:#14181c;--card:#1c2228;--ink:#e8ecef;--mute:#9aa6b1;--line:#2c343c;--acc:#5fc3a6}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:860px;margin:0 auto;padding:48px 16px}
+h1{font-size:28px;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 32px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:16px}
+a.card{display:block;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;color:inherit;text-decoration:none;transition:border-color .15s}
+a.card:hover{border-color:var(--acc)}
+.card h2{font-size:18px;margin:0 0 6px;color:var(--acc)}
+.card p{margin:0;color:var(--mute);font-size:14px}
+.tag{display:inline-block;margin-top:12px;font-size:12px;color:var(--mute);border:1px solid var(--line);border-radius:99px;padding:1px 8px}
+footer{margin-top:48px;color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<h1>Outils énergétiques</h1>
+<p class="sub">Outils pour le CECB, le PEIK et les calculs SIA 380/1. Ils tournent entièrement dans le navigateur, sans installation.</p>
+<div class="grid">
+  <a class="card" href="metre3d/">
+    <h2>Métré 3D</h2>
+    <p>Dimensions d'enveloppe depuis swissBUILDINGS3D : façades par orientation, toiture, volume, SRE, fenêtres. Exports Excel et CECB.</p>
+    <span class="tag">v18</span>
+  </a>
+</div>
+<footer>Les données d'un projet restent dans ton navigateur. Rien n'est envoyé sur un serveur, hormis les requêtes publiques vers geo.admin.ch.</footer>
+</main>
+</body>
+</html>
