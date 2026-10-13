@@ -315,7 +315,13 @@ const DEFAULT_SETTINGS = {
   taux: 135, tauxThermo: 145, tva: 8.1, km: 0.7, roy: 80, royp: 190, pubMaj: 30,
   seuilZone: 30, subvInd: 1000, subvAutre: 1500, subvComPct: 50, subvComMax: 1000,
   rabaisChauffren: 5, rabaisExistant: 10, rabaisLesosai: 40,
-  departs: [{ id: 'bureau', nom: 'Bureau batismart', adresse: 'Rue des Pêcheurs 8b, 1400 Yverdon-les-Bains', lat: 46.7785, lon: 6.6409 }],
+  departs: [{ id: 'bureau', nom: 'Bureau batismart', adresse: 'Rue des Pêcheurs 8b, 1400 Yverdon-les-Bains', lat: 46.7785, lon: 6.6409 },
+    { id: 'emp-rvaucher', nom: 'Romain Vaucher', adresse: 'Impasse du Champ-Corboud 17a', lat: null, lon: null },
+    { id: 'emp-spittet', nom: 'Sylvain Pittet', adresse: 'Rue Pestalozzi 4b, Yverdon-les-Bains', lat: null, lon: null },
+    { id: 'emp-apaone', nom: 'Antonio Paone', adresse: 'Chemin Eugène-Grasset 3, 1006 Lausanne', lat: 46.5125, lon: 6.63289 },
+    { id: 'emp-nfuentes', nom: 'Nelson Fuentes', adresse: 'Route de Vigny 24, Surpierre', lat: null, lon: null },
+    { id: 'emp-mmellid', nom: 'Mathias Mellid', adresse: 'Chemin de la Bariliettaz 4, 1122 Romanel-sur-Morges', lat: null, lon: null },
+    { id: 'emp-jpeggimann', nom: 'Jean-Pierre Eggimann', adresse: 'Route de la Blécherette 49, Le Mont-sur-Lausanne', lat: null, lon: null }],
   signataire: { nom: 'Nelson Fuentes', titre: 'Directeur', qualif: 'Ing. HES génie thermique, Expert CECB,\nSpécialiste en protection incendie AEAI' },
   nbIngenieurs: 6, nbExperts: 6, lastExport: null, theme: 'auto',
   mailSignature: 'Meilleures salutations\n\nbatismart SA\nRue des Pêcheurs 8b – 1400 Yverdon-les-Bains\n+41 24 552 02 90 – info@batismart.ch',
@@ -459,11 +465,25 @@ async function loadAll() {
   if (!a.length && !kv.find((x) => x.id === 'seeded')) { S.articles = clone(DEFAULT_ARTICLES); for (const x of S.articles) await DB.put('articles', x); await DB.put('kv', { id: 'seeded', v: true }); }
   else S.articles = a;
   if (!Array.isArray(S.settings.departs) || !S.settings.departs.length) S.settings.departs = clone(DEFAULT_SETTINGS.departs);
+  { const known = new Set(S.settings.departs.map((d) => d.id)), names = new Set(S.settings.departs.map((d) => (d.nom || '').toLowerCase()));
+    for (const d of DEFAULT_SETTINGS.departs) if (!known.has(d.id) && !names.has(d.nom.toLowerCase())) S.settings.departs.push(clone(d)); }
   if (S.settings.bureau) { const d = S.settings.departs[0]; if (S.settings.bureau.lat) Object.assign(d, { lat: S.settings.bureau.lat, lon: S.settings.bureau.lon, adresse: S.settings.bureau.label || d.adresse }); delete S.settings.bureau; }
   for (const o of S.offres) { if (o.projet.nomAuto == null) { o.projet.nomAuto = !o.projet.nom || /^\d{8}(-\d+)?\b/.test(o.projet.nom); applyProjetAuto(o); DB.put('offres', o); } }
   autoExpire();
 }
 const saveSettings = () => DB.put('kv', S.settings);
+/* localise automatiquement (geo.admin) les points de départ saisis sans coordonnées */
+let _geoDep = null;
+function geocodeDeparts() { return _geoDep || (_geoDep = geocodeDeparts0().finally(() => { _geoDep = null; })); }
+async function geocodeDeparts0() {
+  let n = 0;
+  for (const d of S.settings.departs || []) {
+    if (!d.adresse || (d.lat != null && d.lat !== '')) continue;
+    try { const r = await geoSearch(d.adresse); if (r[0]) { Object.assign(d, { lat: r[0].lat, lon: r[0].lon, adresse: r[0].label }); n++; } } catch (e) { /* hors ligne : on réessaiera */ }
+  }
+  if (n) await saveSettings();
+  return n;
+}
 const saveBaremes = () => DB.put('kv', S.baremes);
 async function saveOffre(o) { o.updatedAt = new Date().toISOString(); const i = S.offres.findIndex((x) => x.id === o.id); if (i < 0) S.offres.push(o); else S.offres[i] = o; await DB.put('offres', o); }
 async function saveClient(c) { const i = S.clients.findIndex((x) => x.id === c.id); if (i < 0) S.clients.push(c); else S.clients[i] = c; await DB.put('clients', c); }
@@ -544,6 +564,7 @@ function applyProjetAuto(o) { if (o.projet.nomAuto !== false) o.projet.nom = pro
 /* Trajets depuis tous les points de départ (bureau + domiciles) ; le plus proche est retenu sauf choix manuel */
 async function computeTrajets(b) {
   if (b.lat == null || b.lon == null) return;
+  if ((S.settings.departs || []).some((d) => d.adresse && (d.lat == null || d.lat === ''))) await geocodeDeparts();
   const pts = (S.settings.departs || []).filter((d) => d.lat != null && d.lon != null && d.lat !== '' && d.lon !== '');
   b.trajets = await Promise.all(pts.map(async (d) => { const r = await geoRoute({ lat: b.lat, lon: b.lon }, { lat: +d.lat, lon: +d.lon }); return { id: d.id, nom: d.nom, km: r.km, min: r.min, source: r.source }; }));
   applyTrajet(b);
@@ -2413,6 +2434,7 @@ function applyTheme() { const t = S.settings.theme; if (t === 'auto') document.d
 
 (async function init() {
   await loadAll();
+  geocodeDeparts().then((n) => { if (n && location.hash.includes('param')) render(); });
   if (!S.settings.logoImage) S.settings.logoImage = DEFAULT_LOGO;
   if (S.settings.sigImage === undefined) S.settings.sigImage = DEFAULT_SIG;
   applyTheme(); shell(); window.addEventListener('hashchange', route); route();
