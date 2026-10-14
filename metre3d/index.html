@@ -736,9 +736,9 @@ body.noscroll{overflow:hidden}
     return kept.footprint ? { kept, rest } : null;
   }
 
-  /* Mur du modèle 3D qui longe une ligne tracée sur le cadastre (a→c) : faces verticales à ±12°, à moins de 2 m de la ligne,
+  /* Mur du modèle 3D qui longe une ligne tracée sur le cadastre (a→c) : faces verticales à ±20°, à moins de 2 m de la ligne,
      sur au moins 30 % de sa longueur ; les faces d'un même plan sont cumulées. Rend la droite du mur { p, d } (même sens que a→c) ou null. */
-  function wallLine(b0, a, c, maxD = 2, maxAng = 12) {
+  function wallLine(b0, a, c, maxD = 2, maxAng = 20) {
     const L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.5) return null;
     const u = [(c[0] - a[0]) / L, (c[1] - a[1]) / L], en = [u[1], -u[0]], cosA = Math.cos(maxAng * Math.PI / 180), P = new Map();
     b0.faces.forEach((t) => { const n = newell(t), h = Math.hypot(n[0], n[1]), m = norm(n); if (m < 1e-9 || h < 1e-9 || Math.abs(n[2]) / m > 0.05) return;
@@ -773,12 +773,17 @@ body.noscroll{overflow:hidden}
         const d = [(c[0] - a[0]) / L, (c[1] - a[1]) / L], o = [d[1], -d[0]];                       // o : normale extérieure (CCW)
         let hit = 0; for (let j = 1; j < 10; j++) { const s = j / 10; if (zsAt(a[0] + (c[0] - a[0]) * s + o[0] * 1.5, a[1] + (c[1] - a[1]) * s + o[1] * 1.5).length >= 2) hit++; }
         const cut = hit >= 5; let p = [a[0], a[1]], dd = d;
-        if (!cut && L > 0.05) p = [a[0] + o[0] * 1.5, a[1] + o[1] * 1.5];
-        else if (cut) { const w = wallLine(b0, a, c); if (w) { p = w.p; dd = w.d; } }
-        return { p, d: dd }; });
+        if (cut) { const w = wallLine(b0, a, c); if (w) { p = w.p; dd = w.d; } }
+        return { p, d: dd, cut, a, o }; });
+      // façade réelle repoussée de 1.5 m, sauf à côté d'une coupe presque alignée (l'intersection partirait loin, dans le voisin)
+      lines.forEach((ln, k) => { if (ln.cut) return; const A = lines[(k - 1 + n) % n], B = lines[(k + 1) % n];
+        const near = [A, B].some((q) => q.cut && Math.abs(q.d[0] * ln.d[1] - q.d[1] * ln.d[0]) < 0.5);
+        if (!near) ln.p = [ln.a[0] + ln.o[0] * 1.5, ln.a[1] + ln.o[1] * 1.5]; });
       ring = ring.map((v, k) => { const A = lines[(k - 1 + n) % n], B = lines[k], cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
-        if (Math.abs(cr) < 0.2) { const t = (v[0] - B.p[0]) * B.d[0] + (v[1] - B.p[1]) * B.d[1]; return [B.p[0] + B.d[0] * t, B.p[1] + B.d[1] * t]; }   // côtés presque alignés
-        const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr; return [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t]; });
+        if (Math.abs(cr) < 0.05) { const Q = A.cut ? A : B, t = (v[0] - Q.p[0]) * Q.d[0] + (v[1] - Q.p[1]) * Q.d[1]; return [Q.p[0] + Q.d[0] * t, Q.p[1] + Q.d[1] * t]; }   // côtés presque alignés : on reste sur la coupe
+        const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr, q = [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t];
+        return Math.hypot(q[0] - v[0], q[1] - v[1]) > 3 ? (A.cut ? [A.p[0] + A.d[0] * ((v[0] - A.p[0]) * A.d[0] + (v[1] - A.p[1]) * A.d[1]), A.p[1] + A.d[1] * ((v[0] - A.p[0]) * A.d[0] + (v[1] - A.p[1]) * A.d[1])]
+          : B.cut ? [B.p[0] + B.d[0] * ((v[0] - B.p[0]) * B.d[0] + (v[1] - B.p[1]) * B.d[1]), B.p[1] + B.d[1] * ((v[0] - B.p[0]) * B.d[0] + (v[1] - B.p[1]) * B.d[1])] : v) : q; });   // garde-fou : angle déplacé de plus de 3 m
       PG[0] = [...ring, ring[0]]; }
     const inPoly = (x, y) => pointInRing(x, y, ring);
     // une face : partie dans l'emprise
