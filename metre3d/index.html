@@ -90,6 +90,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .plan text{font-family:var(--mono);fill:var(--ink)}
 .plan .nb{fill:var(--nb);stroke:var(--nb-line);stroke-width:.08;cursor:pointer}
 .plan .nb:hover{fill:var(--accent-soft)}
+.plan.cad .nb{fill-opacity:.3}.plan.cad .fp{fill-opacity:.5}
 .tablewrap{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
@@ -732,6 +733,91 @@ body.noscroll{overflow:hidden}
     return kept.footprint ? { kept, rest } : null;
   }
 
+  /* Isolement d'un bâtiment dans un volume 3D qui regroupe tout un îlot (anciennes tuiles, p. ex. Vaud 2015-2020) :
+     on garde la partie du solide à l'intérieur de l'emprise poly ([[E,N],…], p. ex. la parcelle bâtie du cadastre),
+     et on ferme par des murs mitoyens le long des côtés de l'emprise qui traversent l'îlot. Rend { kept, rest } ou null. */
+  function splitBuildingPoly(b0, poly, keep) {
+    let ring = poly.map((p) => [p[0], p[1]]); if (ring.length < 3) return null; if (ringArea(ring) < 0) ring = ring.reverse();   // CCW
+    const PG = [[...ring, ring[0]]], ring0 = ring.slice();
+    const HZ0 = b0.faces.map((t) => { const n = newell(t), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m < 0.05) return null;
+      return { t, n, x0: Math.min(...t.map((p) => p[0])), x1: Math.max(...t.map((p) => p[0])), y0: Math.min(...t.map((p) => p[1])), y1: Math.max(...t.map((p) => p[1])) }; }).filter(Boolean);
+    const zsAt = (x, y) => { const zs = []; for (const h of HZ0) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
+      zs.push(h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2]); } return zs.sort((a, c) => a - c); };
+    const inSolid0 = (x, y, z) => zsAt(x, y).filter((zz) => zz > z).length % 2 === 1;
+    // côtés de l'emprise : « coupe » s'il y a encore du bâtiment à 1.5 m au-delà (îlot), sinon façade réelle. Le cadastre et le
+    // modèle 3D ne coïncident pas au décimètre : une façade réelle est repoussée de 1.5 m vers l'extérieur pour ne rien rogner.
+    { const n = ring.length, off = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.05) return 0;
+        const ox = (c[1] - a[1]) / L, oy = -(c[0] - a[0]) / L; let hit = 0, tot = 0;               // normale extérieure (CCW)
+        for (let j = 1; j < 10; j++) { const s = j / 10; tot++; if (zsAt(a[0] + (c[0] - a[0]) * s + ox * 1.5, a[1] + (c[1] - a[1]) * s + oy * 1.5).length >= 2) hit++; }
+        return hit / tot >= 0.5 ? 0 : 1.5; });
+      const line = (k) => { const a = ring[k], c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1, ox = (c[1] - a[1]) / L, oy = -(c[0] - a[0]) / L;
+        return { p: [a[0] + ox * off[k], a[1] + oy * off[k]], d: [(c[0] - a[0]) / L, (c[1] - a[1]) / L] }; };
+      ring = ring.map((v, k) => { const k0 = (k - 1 + n) % n; if (!off[k0] && !off[k]) return v; const A = line(k0), B = line(k), cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
+        if (Math.abs(cr) < 0.2) { const kk = off[k] ? k : k0, Lk = line(kk), a = ring[kk]; return [v[0] + Lk.p[0] - a[0], v[1] + Lk.p[1] - a[1]]; }   // côtés presque alignés
+        const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr; return [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t]; });
+      PG[0] = [...ring, ring[0]]; }
+    const inPoly = (x, y) => pointInRing(x, y, ring);
+    // une face : partie dans l'emprise
+    const clipFace = (t) => {
+      const n = newell(t), m = norm(n); if (m < 1e-9) return [];
+      if (Math.abs(n[2]) / m >= 0.05) {                                   // face non verticale : intersection de sa projection
+        const pr = t.map((p) => [p[0], p[1]]), sg = Math.sign(ringArea(pr)); let r;
+        try { r = PC.intersection([[...pr, pr[0]]], PG); } catch (e) { return []; }
+        const out = []; r.forEach((pg) => { let q = openRing(pg[0]); if (Math.abs(ringArea(q)) < 1e-4) return; if (Math.sign(ringArea(q)) !== sg) q = q.reverse();
+          out.push(q.map(([x, y]) => [x, y, t[0][2] - (n[0] * (x - t[0][0]) + n[1] * (y - t[0][1])) / n[2]])); });
+        return out; }
+      // face verticale : bandes de l'abscisse où le côté « matière » de la face est dans l'emprise
+      const h = Math.hypot(n[0], n[1]), nx = n[0] / h, ny = n[1] / h, tx = ny, ty = -nx, O = t[0];
+      const q = t.map((p) => [(p[0] - O[0]) * tx + (p[1] - O[1]) * ty, p[2]]), s0 = Math.min(...q.map((v) => v[0])), s1 = Math.max(...q.map((v) => v[0]));
+      const zc = t.reduce((s, p) => s + p[2], 0) / t.length, X = (s, d) => [O[0] + tx * s + nx * d, O[1] + ty * s + ny * d];
+      const brk = [s0, s1];
+      for (let k = 0; k < ring.length; k++) { const a = ring[k], c = ring[(k + 1) % ring.length];
+        const da = (a[0] - O[0]) * nx + (a[1] - O[1]) * ny, dc = (c[0] - O[0]) * nx + (c[1] - O[1]) * ny;
+        if (Math.abs(da) < 0.02) { const s = (a[0] - O[0]) * tx + (a[1] - O[1]) * ty; if (s > s0 && s < s1) brk.push(s); }
+        if (da * dc < 0) { const u = da / (da - dc), s = (a[0] + u * (c[0] - a[0]) - O[0]) * tx + (a[1] + u * (c[1] - a[1]) - O[1]) * ty; if (s > s0 && s < s1) brk.push(s); } }
+      brk.sort((a, c) => a - c);
+      const strips = [];
+      for (let k = 0; k < brk.length - 1; k++) { const sa = brk[k], sb = brk[k + 1]; if (sb - sa < 1e-3) continue; const sm = (sa + sb) / 2;
+        const pP = X(sm, 0.05), pN = X(sm, -0.05), mat = inSolid0(pP[0], pP[1], zc) ? pP : inSolid0(pN[0], pN[1], zc) ? pN : X(sm, 0);
+        if (inPoly(mat[0], mat[1])) strips.push([[[sa - 1e-4, -1e4], [sb + 1e-4, -1e4], [sb + 1e-4, 1e4], [sa - 1e-4, 1e4], [sa - 1e-4, -1e4]]]); }
+      if (!strips.length) return [];
+      if (strips.length === 1 && strips[0][0][0][0] <= s0 && strips[0][0][1][0] >= s1) return [t];
+      let r; try { r = PC.intersection([[...q, q[0]]], PC.union(...strips)); } catch (e) { return []; }
+      return r.map((pg) => openRing(pg[0])).filter((v) => Math.abs(ringArea(v)) > 1e-3).map((v) => v.map(([s, z]) => [O[0] + tx * s, O[1] + ty * s, z]));
+    };
+    const faces = [], rest = []; b0.faces.forEach((t) => faces.push(...clipFace(t)));
+    const walls = []; (b0.walls || []).forEach((t) => walls.push(...clipFace(t)));
+    // reste de l'îlot (affiché en voisin) : faces dont le centre est hors de l'emprise
+    b0.faces.forEach((t) => { const x = t.reduce((s, p) => s + p[0], 0) / t.length, y = t.reduce((s, p) => s + p[1], 0) / t.length; if (!inPoly(x, y)) rest.push(t); });
+    if (!faces.length) return null;
+    // murs de coupe : côtés de l'emprise avec de la matière des deux côtés ; section exacte du solide le long du côté
+    const used = [], caps = [];
+    for (let k = 0; k < ring.length; k++) { const a = ring[k], c = ring[(k + 1) % ring.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.2) continue;
+      const ux = (c[0] - a[0]) / L, uy = (c[1] - a[1]) / L, inx = -uy, iny = ux;          // normale intérieure (CCW)
+      const brk = [0, L];
+      HZ0.forEach((h) => { const r = h.t; for (let j = 0; j < r.length; j++) { const p1 = r[j], p2 = r[(j + 1) % r.length];
+        const d1 = (p1[0] - a[0]) * inx + (p1[1] - a[1]) * iny, d2 = (p2[0] - a[0]) * inx + (p2[1] - a[1]) * iny;
+        if (d1 * d2 < 0) { const u = d1 / (d1 - d2), s = (p1[0] + u * (p2[0] - p1[0]) - a[0]) * ux + (p1[1] + u * (p2[1] - p1[1]) - a[1]) * uy; if (s > 0 && s < L) brk.push(s); } } });
+      brk.sort((x, y) => x - y);
+      const sec = (s, d) => zsAt(a[0] + ux * s + inx * d, a[1] + uy * s + iny * d), pieces = [];
+      for (let j = 0; j < brk.length - 1; j++) { const sa = brk[j], sb = brk[j + 1], w = sb - sa; if (w < 1e-3) continue;
+        const e = Math.min(1e-3, w / 4), A = sec(sa + e, 0.01), B = sec(sb - e, 0.01), Om = sec((sa + sb) / 2, -0.05), g = (w - 2 * e) || 1;
+        if (Om.length < 2) continue;                                               // rien de l'autre côté : façade réelle, pas une coupe
+        if (A.length === B.length && A.length % 2 === 0) { for (let i = 0; i < A.length; i += 2) {
+            const za0 = A[i] - (B[i] - A[i]) / g * e, za1 = A[i + 1] - (B[i + 1] - A[i + 1]) / g * e, zb0 = B[i] + (B[i] - A[i]) / g * e, zb1 = B[i + 1] + (B[i + 1] - A[i + 1]) / g * e;
+            if (Math.max(za1 - za0, zb1 - zb0) > 1e-3) pieces.push([[[sa, za0], [sb, zb0], [sb, zb1], [sa, za1], [sa, za0]]]); } }
+        else { const M = sec((sa + sb) / 2, 0.01); for (let i = 0; i + 1 < M.length; i += 2) pieces.push([[[sa, M[i]], [sb, M[i]], [sb, M[i + 1]], [sa, M[i + 1]], [sa, M[i]]]]); } }
+      if (!pieces.length) continue;
+      let U; try { U = PC.union(...pieces); } catch (e) { U = pieces; }
+      U.forEach((pg) => { const r = openRing(pg[0]); if (Math.abs(ringArea(r)) > 0.05) caps.push(r.map(([s, z]) => [a[0] + ux * s, a[1] + uy * s, z])); });
+      used.push({ a: [a[0], a[1]], b: [c[0], c[1]], n: [inx, iny], cut: true });
+    }
+    caps.forEach((pts) => { faces.push(pts); if (walls.length) walls.push(pts); });
+    const kept = Object.assign({}, b0, { faces, walls, __root: b0.__root || b0, splitLines: used, splitPoly: ring0, __rest: rest, __keep: keep || ring[0] });
+    delete kept.__bottom; delete kept.fpOther; computeFootprint(kept);
+    return kept.footprint ? { kept, rest } : null;
+  }
+
   function pickBuilding(blds, E, N) {
     const inside = blds.filter((b) => pointInRing(E, N, b.footprint) || distPointRing(E, N, b.footprint) < 0.3);
     if (inside.length) return { b: inside.sort((a, c) => c.fpArea - a.fpArea)[0], why: "contient le point de l'adresse" };
@@ -1335,7 +1421,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { splitBuilding, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -1914,7 +2000,9 @@ async function analyseBuilding(b, why, manual){
   while(b.__orig) b = b.__orig; if(b.__root) b = b.__root;
   S.bOrig = b; S.whyOrig = why; S.manualOrig = manual;
   // séparation d'un volume 3D partagé avec une autre adresse (lignes de coupe saisies sur le plan)
-  const sp = S.extra.split; if(sp && sp.uuid === b.props.UUID && sp.lines && sp.lines.length){ const r = C.splitBuilding(b, sp.lines, sp.keep); if(r) b = r.kept; }
+  const sp = S.extra.split;
+  if(sp && sp.uuid === b.props.UUID && sp.poly && sp.poly.length >= 3){ const r = C.splitBuildingPoly(b, sp.poly, sp.keep); if(r) b = r.kept; }
+  else if(sp && sp.uuid === b.props.UUID && sp.lines && sp.lines.length){ const r = C.splitBuilding(b, sp.lines, sp.keep); if(r) b = r.kept; }
   b = window.applyCorr ? window.applyCorr(b) : b;
   S.b=b; step('terrain','run'); status('Terrain par façade…');
   const useT = $('opt-terrain').checked;
@@ -1943,21 +2031,32 @@ function planSVG(forExport){
   let mnx=Infinity,mny=Infinity,mxx=-Infinity,mxy=-Infinity;
   fp.forEach(p=>{mnx=Math.min(mnx,p[0]);mny=Math.min(mny,p[1]);mxx=Math.max(mxx,p[0]);mxy=Math.max(mxy,p[1]);});
   const pad=7; mnx-=pad; mny-=pad; mxx+=pad; mxy+=pad;
+  // tracé de l'emprise : vue centrée sur l'adresse (±30 m), le volume d'origine pouvant couvrir tout un îlot
+  if(!forExport && S.empMode){ const R0=Math.min(30, Math.max(mxx-mnx,mxy-mny)/2); mnx=S.sel.E-R0; mxx=S.sel.E+R0; mny=S.sel.N-R0; mxy=S.sel.N+R0; }
   const W=mxx-mnx, H=mxy-mny, tx=(x)=>(x-mnx), ty=(y)=>(mxy-y);
   const poly=(r)=>r.map(p=>`${tx(p[0]).toFixed(2)},${ty(p[1]).toFixed(2)}`).join(' ');
   const fs = Math.max(W,H)/36;
-  let s = `<svg xmlns="http://www.w3.org/2000/svg" class="plan" viewBox="0 0 ${W.toFixed(2)} ${H.toFixed(2)}" data-x0="${mnx}" data-y1="${mxy}" role="img" aria-label="Plan de l'empreinte et des façades">`;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" class="plan${!forExport&&S.cadastre?' cad':''}" viewBox="0 0 ${W.toFixed(2)} ${H.toFixed(2)}" data-x0="${mnx}" data-y1="${mxy}" role="img" aria-label="Plan de l'empreinte et des façades">`;
   if(forExport) s+=`<rect width="100%" height="100%" fill="#ffffff"/>`;
+  // fond : plan cadastral officiel (WMS geo.admin.ch), pour tracer l'emprise réelle du bâtiment
+  if(!forExport && S.cadastre){ const px=Math.round(Math.min(2000, 40*W)), py=Math.round(px*H/W);
+    const u=`https://wms.geo.admin.ch/?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=ch.kantone.cadastralwebmap-farbe&STYLES=&CRS=EPSG:2056&BBOX=${mnx.toFixed(2)},${mny.toFixed(2)},${mxx.toFixed(2)},${mxy.toFixed(2)}&WIDTH=${px}&HEIGHT=${py}&FORMAT=image/png&TRANSPARENT=true`;
+    s+=`<image href="${u.replace(/&/g,'&amp;')}" x="0" y="0" width="${W.toFixed(2)}" height="${H.toFixed(2)}" preserveAspectRatio="none" opacity="0.75"/>`; }
   S.blds.filter(o=>o!==b).forEach((o,i)=>{ s+=`<polygon class="nb" data-i="${S.blds.indexOf(o)}" points="${poly(o.footprint)}"${forExport?' fill="#e3e7e5" stroke="#9aa5a0" stroke-width="0.08"':''}><title>Analyser ce bâtiment (EGID ${esc(o.props.EGID??'?')})</title></polygon>`; });
   const root=b.__root; if(root && root.footprint && !forExport) s+=`<polygon points="${poly(root.footprint)}" fill="none" stroke="var(--muted)" stroke-width="${(fs*0.12).toFixed(2)}" stroke-dasharray="${(fs*0.5).toFixed(2)} ${(fs*0.35).toFixed(2)}"><title>Volume 3D d'origine (avec la partie séparée)</title></polygon>`;
-  s+=`<polygon points="${poly(fp)}" fill="${forExport?'#d6ebe6':'var(--fp)'}" stroke="none"/>`;
-  (b.splitLines||[]).forEach(L=>{ const ux=L.b[0]-L.a[0], uy=L.b[1]-L.a[1], m=Math.hypot(ux,uy)||1, e=12; const A=[L.a[0]-ux/m*e, L.a[1]-uy/m*e], B=[L.b[0]+ux/m*e, L.b[1]+uy/m*e];
+  s+=`<polygon class="fp" points="${poly(fp)}" fill="${forExport?'#d6ebe6':'var(--fp)'}" stroke="none"/>`;
+  // tracé de l'emprise : arêtes de toit du volume d'origine (faîtes, noues, changements de hauteur = souvent les limites entre bâtiments)
+  if(!forExport && S.empMode){ const rt=b.__root||b; const bot=C.bottomFaces(rt);
+    rt.faces.forEach((t,i)=>{ if(bot.has(i)) return; const a=t[1].map((v,k)=>v-t[0][k]), c=t[2].map((v,k)=>v-t[0][k]), nz=a[0]*c[1]-a[1]*c[0], m=Math.hypot(a[1]*c[2]-a[2]*c[1], a[2]*c[0]-a[0]*c[2], nz); if(!m || Math.abs(nz)/m<0.05) return;
+      s+=`<polygon points="${poly(t)}" fill="none" stroke="var(--muted)" stroke-width="${(fs*0.04).toFixed(3)}" opacity="0.7"/>`; }); }
+  if(b.splitPoly && !forExport) s+=`<polygon points="${poly(b.splitPoly)}" fill="none" stroke="#a855f7" stroke-width="${(fs*0.12).toFixed(2)}" stroke-dasharray="${(fs*0.5).toFixed(2)} ${(fs*0.3).toFixed(2)}"><title>Emprise tracée (bâtiment isolé dans l'îlot)</title></polygon>`;
+  (b.splitPoly?[]:(b.splitLines||[])).forEach(L=>{ const ux=L.b[0]-L.a[0], uy=L.b[1]-L.a[1], m=Math.hypot(ux,uy)||1, e=12; const A=[L.a[0]-ux/m*e, L.a[1]-uy/m*e], B=[L.b[0]+ux/m*e, L.b[1]+uy/m*e];
     s+=`<line x1="${tx(A[0]).toFixed(2)}" y1="${ty(A[1]).toFixed(2)}" x2="${tx(B[0]).toFixed(2)}" y2="${ty(B[1]).toFixed(2)}" stroke="#a855f7" stroke-width="${(fs*0.15).toFixed(2)}" stroke-dasharray="${(fs*0.6).toFixed(2)} ${(fs*0.3).toFixed(2)}"/>`; });
   const colEx={'Nord':'#2563a8','Est':'#2f8f4e','Sud':'#c0392b','Ouest':'#d9822b'};
   res.edges.forEach(e=>{
     const c = forExport ? (colEx[e.orientation]||'#7a4eb8') : ocol(e.orientation);
     s+=`<line x1="${tx(e.p1[0]).toFixed(2)}" y1="${ty(e.p1[1]).toFixed(2)}" x2="${tx(e.p2[0]).toFixed(2)}" y2="${ty(e.p2[1]).toFixed(2)}" stroke="${c}" stroke-width="${(fs*0.35).toFixed(2)}" stroke-linecap="round"/>`;
-    if(e.L>1.2){
+    if(e.L>1.2 && !(S.empMode && !forExport)){
       const mx=(e.p1[0]+e.p2[0])/2+e.n[0]*fs*2.1, my=(e.p1[1]+e.p2[1])/2+e.n[1]*fs*2.1;
       const fill = forExport?'fill="#16201c"':'';
       s+=`<text x="${tx(mx).toFixed(2)}" y="${ty(my).toFixed(2)}" font-size="${fs.toFixed(2)}" text-anchor="middle" ${fill}><tspan x="${tx(mx).toFixed(2)}" dy="-0.4em" font-weight="500">${e.orientation} ${fmt(e.L)} m</tspan><tspan x="${tx(mx).toFixed(2)}" dy="1.2em">${fmt(e.area,1)} m²</tspan></text>`;
@@ -1993,8 +2092,9 @@ function render(){
     <div><span>Enveloppe Ath</span><strong>${fmt(Ath)} m²</strong></div>
     <div><span>SRE</span><strong>${sre?fmt(sre)+' m²':'—'}</strong></div>
     <div><span>Ath / SRE</span><strong>${sre?fmt(Ath/sre):'—'}</strong></div></div>`;
-  h += `<div class="split"><div>${planSVG(false)}<p class="note">Cliquez sur un bâtiment gris pour l'analyser à la place. Croix = point de l'adresse.</p>
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Séparer d'un bâtiment accolé</button>${(b.splitLines||[]).length?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<span class="note" id="sp-msg"></span></div></div><div class="col">`;
+  const rbA = rb && +rb.surface_sol, big = !b.splitPoly && !(b.splitLines||[]).length && ((rbA > 0 && b.fpArea > 1.8 * rbA) || (!rbA && b.fpArea > 600));
+  h += `<div class="split"><div>${big ? `<div class="note" style="border-left:3px solid var(--crit-e,#c0392b);padding:4px 8px;margin-bottom:6px"><b>Volume 3D trop grand</b> : ${fmt(b.fpArea,0)} m² au sol${rbA > 0 ? ` pour ${fmt(rbA,0)} m² au RegBL` : ''}. Le modèle regroupe sans doute tout l'îlot (fréquent sur les anciennes tuiles, p. ex. Vaud) : utilisez <b>Tracer l'emprise du bâtiment</b> sur le fond cadastral.</div>` : ''}${planSVG(false)}<p class="note">Cliquez sur un bâtiment gris pour l'analyser à la place. Croix = point de l'adresse.</p>
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="emp-go" aria-pressed="${S.empMode?'true':'false'}" title="Le volume 3D couvre tout un îlot : tracez le contour du bâtiment sur le plan cadastral (clics sur les angles, accrochage aux angles du modèle 3D), on garde l'intérieur">▭ Tracer l'emprise du bâtiment</button><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Couper par une ligne</button>${(b.splitLines||[]).length||b.splitPoly?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<label class="note" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cad-on"${S.cadastre?' checked':''}> Fond cadastre</label><span class="note" id="sp-msg" style="flex-basis:100%"></span></div></div><div class="col">`;
   h += `<div><h2>Éléments CECB</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Élément</th><th class="n">Net m²</th></tr></thead><tbody>` +
     L.map(x=>`<tr><td class="mono" style="white-space:nowrap">${x.code}</td><td>${esc(x.name.replace(' (3D)',''))}<div class="note">${esc(x.type)}</div></td><td class="n">${fmt(x.net)}</td></tr>`).join('') +
     `</tbody></table></div><p class="note">Ce sont les lignes exportées. Pour changer le type d'un mur ou d'un pan : onglet <b>4 Enveloppe 3D</b>. Fenêtres non saisies : onglet <b>3</b>.</p></div>`;
@@ -4177,8 +4277,42 @@ window.wireSplit = function(R){
     S.extra.adj = {}; T3 && (T3.sel = []);
     analyseBuilding(root, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true));
   }, true);
-  if(un) un.onclick = () => { S.extra.split = null; S.extra.adj = {}; analyseBuilding(S.bOrig, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true)); };
+  if(un) un.onclick = () => { S.extra.split = null; S.extra.adj = {}; S.empMode = false; analyseBuilding(S.bOrig, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true)); };
+  const cad = $('cad-on'); if(cad) cad.onchange = () => { S.cadastre = cad.checked; render(); };
+  // ---- tracé de l'emprise (polygone) : le bâtiment est isolé dans un volume 3D qui couvre tout l'îlot
+  const eg = $('emp-go'); if(!eg) return;
+  eg.onclick = () => { eg.blur(); S.empMode = !S.empMode; S.empPts = []; if(S.empMode){ S.splitMode = false; if(S.cadastre == null) S.cadastre = true; } render(); };
+  if(!S.empMode) return;
+  svg.style.cursor = 'crosshair';
+  const root = S.bOrig, x0 = +svg.dataset.x0, y1 = +svg.dataset.y1, ns = 'http://www.w3.org/2000/svg', k = +svg.viewBox.baseVal.width / 140;
+  // points d'accrochage : angles du volume 3D d'origine et sommets de ses faces (arêtes de toit = souvent les murs mitoyens)
+  const snapPts = []; { const seen = new Set(); const add = (p) => { const key = Math.round(p[0] * 10) + ',' + Math.round(p[1] * 10); if(!seen.has(key)){ seen.add(key); snapPts.push([p[0], p[1]]); } };
+    (root.footprint || []).forEach(add); root.faces.forEach((t) => t.forEach(add)); }
+  const g = document.createElementNS(ns, 'g'); svg.appendChild(g);
+  const pl = document.createElementNS(ns, 'polyline'); pl.setAttribute('fill', 'rgba(168,85,247,0.12)'); pl.setAttribute('stroke', '#a855f7'); pl.setAttribute('stroke-width', k * 0.6); g.appendChild(pl);
+  const cur = document.createElementNS(ns, 'circle'); cur.setAttribute('r', k * 1.4); cur.setAttribute('fill', 'none'); cur.setAttribute('stroke', '#a855f7'); cur.setAttribute('stroke-width', k * 0.4); g.appendChild(cur);
+  const ep = S.empPts || (S.empPts = []);
+  const snap = (p) => { const tol = 12 * (+svg.viewBox.baseVal.width) / svg.getBoundingClientRect().width;   // 12 px à l'écran
+    let bd = tol, bq = null; snapPts.forEach((q) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if(d < bd){ bd = d; bq = q; } });
+    if(ep.length >= 3 && Math.hypot(ep[0][0] - p[0], ep[0][1] - p[1]) < tol) return { p: ep[0], close: true };
+    return { p: bq ? bq : p, snapped: !!bq }; };
+  const redraw = (extra) => { const all = extra ? [...ep, extra] : ep; pl.setAttribute('points', all.map((q) => `${(q[0] - x0).toFixed(2)},${(y1 - q[1]).toFixed(2)}`).join(' ')); };
+  const finish = () => {
+    if(ep.length < 3){ msg.textContent = 'Il faut au moins 3 angles.'; return; }
+    const sp = { uuid: root.props.UUID, keep: [S.sel.E, S.sel.N], poly: ep.map((q) => [q[0], q[1]]) };
+    const test = C.splitBuildingPoly(root, sp.poly, sp.keep);
+    if(!test){ msg.textContent = 'Emprise vide : elle ne recouvre pas le volume 3D. Recommencez.'; S.empPts = []; redraw(); return; }
+    S.extra.split = sp; S.empMode = false; S.empPts = []; S.extra.adj = {}; T3 && (T3.sel = []);
+    status(`Emprise tracée : volume ${fmt(root.fpArea)} → ${fmt(test.kept.fpArea)} m² au sol, ${test.kept.splitLines.length} mur(s) mitoyen(s) créé(s). Recalcul…`);
+    analyseBuilding(root, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true));
+  };
+  msg.innerHTML = 'Cliquez les angles du bâtiment sur le plan (accrochage aux angles du modèle 3D, cercle plein). Recliquez le 1er point ou <b>Entrée</b> pour fermer · <b>Retour arrière</b> : annuler le dernier point · <b>Échap</b> : abandonner.';
+  svg.addEventListener('mousemove', (ev) => { const r = snap(toEN(ev)); cur.setAttribute('cx', r.p[0] - x0); cur.setAttribute('cy', y1 - r.p[1]); cur.setAttribute('fill', r.snapped || r.close ? '#a855f7' : 'none'); redraw(r.p); });
+  svg.addEventListener('click', (ev) => { if(!S.empMode) return; ev.stopPropagation(); ev.preventDefault(); const r = snap(toEN(ev));
+    if(r.close){ finish(); return; } ep.push([r.p[0], r.p[1]]); redraw(); }, true);
+  S.empKey = (e) => { if(!S.empMode) return; if(e.key === 'Enter'){ e.preventDefault(); finish(); } else if(e.key === 'Backspace'){ e.preventDefault(); ep.pop(); redraw(); } else if(e.key === 'Escape'){ S.empMode = false; S.empPts = []; render(); } };
 };
+document.addEventListener('keydown', (e) => { if(S.empKey) S.empKey(e); });
 document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && S.splitMode){ S.splitMode = false; const m = $('sp-msg'); if(m) m.textContent = ''; const sv = document.querySelector('#res svg.plan'); if(sv) sv.style.cursor = ''; } });
 
 })();
