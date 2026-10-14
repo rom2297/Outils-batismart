@@ -1064,7 +1064,7 @@ body.noscroll{overflow:hidden}
       e.areaTotal = mpArea(U);
       e.ztop = polys.length ? Math.max(...polys.map((p) => Math.max(...p[0].map((q) => q[1])))) : NaN;
       const pts = e.terrain.slice().sort((a, c) => a[0] - c[0]);
-      const prof = [[-0.01, pts[0][1]], ...pts, [e.L + 0.01, pts[pts.length - 1][1]]].map(([s, z]) => [s, Math.max(z, zCut)]);
+      const prof = [[-5, pts[0][1]], ...pts, [e.L + 5, pts[pts.length - 1][1]]].map(([s, z]) => [s, Math.max(z, zCut)]);
       const top = (isNaN(e.ztop) ? 0 : e.ztop) + 50;
       const above = [[...prof, [prof[prof.length - 1][0], top], [prof[0][0], top], prof[0]]];
       e.area = U.length ? mpArea(PC.intersection(U, [above])) : 0;
@@ -1376,8 +1376,8 @@ body.noscroll{overflow:hidden}
       let U0 = e.U; if (isFinite(e.zbot) && zF < e.zbot - 0.01) U0 = PC.union(U0, [[[0, zF], [e.L, zF], [e.L, e.zbot + 0.01], [0, e.zbot + 0.01], [0, zF]]]);   // radier plus profond que le modèle : mur prolongé
       const U = PC.intersection(U0, [[[-1, zF], [e.L + 1, zF], [e.L + 1, big], [-1, big], [-1, zF]]]); if (!U.length) return;
       const t = e.terrain.slice().sort((a, c) => a[0] - c[0]);
-      const prof = [[-0.01, t[0][1]], ...t, [e.L + 0.01, t[t.length - 1][1]]];
-      const above = [[...prof, [e.L + 0.01, big], [-0.01, big], prof[0]]], below = [[...prof, [e.L + 0.01, -big], [-0.01, -big], prof[0]]];
+      const prof = [[-5, t[0][1]], ...t, [e.L + 5, t[t.length - 1][1]]];
+      const above = [[...prof, [e.L + 5, big], [-5, big], prof[0]]], below = [[...prof, [e.L + 5, -big], [-5, -big], prof[0]]];
       const bands = []; const c0 = zCut != null ? zCut : -big, c1 = zEave != null ? zEave : big;
       if (zCut != null) bands.push(['bas', -big, zCut]);
       bands.push(['mur', c0, Math.max(c0, c1)]);
