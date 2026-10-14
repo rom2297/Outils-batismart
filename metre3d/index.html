@@ -744,6 +744,24 @@ body.noscroll{overflow:hidden}
     const zsAt = (x, y) => { const zs = []; for (const h of HZ0) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
       zs.push(h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2]); } return zs.sort((a, c) => a - c); };
     const inSolid0 = (x, y, z) => zsAt(x, y).filter((zz) => zz > z).length % 2 === 1;
+    // côtés de l'emprise recalés sur les murs du modèle : un côté tracé sur le cadastre tombe souvent à quelques décimètres du mur
+    // 3D (p. ex. dans le bâtiment voisin plus haut) → on le pose exactement sur la face verticale parallèle la plus proche (≤ 0.8 m)
+    { const VF0 = b0.faces.map((t) => { const n = newell(t), h = Math.hypot(n[0], n[1]), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m > 0.05 || h < 1e-9) return null;
+        const nx = n[0] / h, ny = n[1] / h, d = t[0][0] * nx + t[0][1] * ny, ts = t.map((p) => -p[0] * ny + p[1] * nx);
+        return { nx, ny, d, s0: Math.min(...ts), s1: Math.max(...ts), A: m / 2 }; }).filter(Boolean);
+      const n = ring.length, lines = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1; return { p: [a[0], a[1]], d: [(c[0] - a[0]) / L, (c[1] - a[1]) / L], L }; });
+      let moved = false;
+      lines.forEach((ln, k) => { if (ln.L < 1) return; const a = ring[k], c = ring[(k + 1) % n], en = [ln.d[1], -ln.d[0]];
+        let best = null, bs = 0;
+        VF0.forEach((f) => { if (Math.abs(f.nx * en[0] + f.ny * en[1]) < 0.985) return;
+          const da = a[0] * f.nx + a[1] * f.ny - f.d, dc = c[0] * f.nx + c[1] * f.ny - f.d; if (Math.abs(da) > 0.8 || Math.abs(dc) > 0.8 || Math.abs(da - dc) > 0.3) return;
+          const sa = -a[0] * f.ny + a[1] * f.nx, sc = -c[0] * f.ny + c[1] * f.nx, ov = Math.min(Math.max(sa, sc), f.s1) - Math.max(Math.min(sa, sc), f.s0);
+          if (ov < 0.3 * Math.min(ln.L, f.s1 - f.s0)) return; const sc2 = f.A * ov / (0.2 + Math.abs(da + dc) / 2); if (sc2 > bs) { bs = sc2; best = f; } });
+        if (best) { const da = a[0] * best.nx + a[1] * best.ny - best.d; ln.p = [a[0] - best.nx * da, a[1] - best.ny * da]; const sg = best.nx * en[0] + best.ny * en[1] > 0 ? 1 : -1; ln.d = [-best.ny * sg, best.nx * sg]; moved = true; } });
+      if (moved) ring = ring.map((v, k) => { const A = lines[(k - 1 + n) % n], B = lines[k], cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
+        if (Math.abs(cr) < 0.2) return [B.p[0], B.p[1]];
+        const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr; return [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t]; });
+      PG[0] = [...ring, ring[0]]; }
     // côtés de l'emprise : « coupe » s'il y a encore du bâtiment à 1.5 m au-delà (îlot), sinon façade réelle. Le cadastre et le
     // modèle 3D ne coïncident pas au décimètre : une façade réelle est repoussée de 1.5 m vers l'extérieur pour ne rien rogner.
     { const n = ring.length, off = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.05) return 0;
@@ -801,12 +819,12 @@ body.noscroll{overflow:hidden}
       brk.sort((x, y) => x - y);
       const sec = (s, d) => zsAt(a[0] + ux * s + inx * d, a[1] + uy * s + iny * d), pieces = [];
       for (let j = 0; j < brk.length - 1; j++) { const sa = brk[j], sb = brk[j + 1], w = sb - sa; if (w < 1e-3) continue;
-        const e = Math.min(1e-3, w / 4), A = sec(sa + e, 0.01), B = sec(sb - e, 0.01), Om = sec((sa + sb) / 2, -0.05), g = (w - 2 * e) || 1;
+        const e = Math.min(1e-3, w / 4), A = sec(sa + e, 0.05), B = sec(sb - e, 0.05), Om = sec((sa + sb) / 2, -0.05), g = (w - 2 * e) || 1;
         if (Om.length < 2) continue;                                               // rien de l'autre côté : façade réelle, pas une coupe
         if (A.length === B.length && A.length % 2 === 0) { for (let i = 0; i < A.length; i += 2) {
             const za0 = A[i] - (B[i] - A[i]) / g * e, za1 = A[i + 1] - (B[i + 1] - A[i + 1]) / g * e, zb0 = B[i] + (B[i] - A[i]) / g * e, zb1 = B[i + 1] + (B[i + 1] - A[i + 1]) / g * e;
             if (Math.max(za1 - za0, zb1 - zb0) > 1e-3) pieces.push([[[sa, za0], [sb, zb0], [sb, zb1], [sa, za1], [sa, za0]]]); } }
-        else { const M = sec((sa + sb) / 2, 0.01); for (let i = 0; i + 1 < M.length; i += 2) pieces.push([[[sa, M[i]], [sb, M[i]], [sb, M[i + 1]], [sa, M[i + 1]], [sa, M[i]]]]); } }
+        else { const M = sec((sa + sb) / 2, 0.05); for (let i = 0; i + 1 < M.length; i += 2) pieces.push([[[sa, M[i]], [sb, M[i]], [sb, M[i + 1]], [sa, M[i + 1]], [sa, M[i]]]]); } }
       if (!pieces.length) continue;
       let U; try { U = PC.union(...pieces); } catch (e) { U = pieces; }
       U.forEach((pg) => { const r = openRing(pg[0]); if (Math.abs(ringArea(r)) > 0.05) caps.push(r.map(([s, z]) => [a[0] + ux * s, a[1] + uy * s, z])); });
