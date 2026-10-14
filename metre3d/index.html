@@ -319,7 +319,7 @@ body.noscroll{overflow:hidden}
     </section>
 
     <section id="t-plans" role="tabpanel" hidden>
-      <p class="tip"><b>1.</b> Ajoutez les élévations (PDF). <b>2.</b> Cliquez « Auto : élévations ». <b>3.</b> Contrôlez chaque page : corrigez une fenêtre en tirant ses coins, ajoutez-en avec l'outil Fenêtre, reposez le repère si besoin (pieds des murs + faîte). <b>Fenêtre fausse :</b> clic droit dessus, ou survol + touche Suppr (Ctrl+Z la rétablit).</p>
+      <p class="tip"><b>Le plus fiable :</b> outil <b>Fenêtre</b>, encadrez une fenêtre de chaque modèle, puis <b>« Ajouter + trouver les identiques »</b> : toutes ses répétitions sur la page sont proposées. <b>1.</b> Ajoutez les élévations (PDF). <b>2.</b> Cliquez « Auto : élévations ». <b>3.</b> Contrôlez chaque page : corrigez une fenêtre en tirant ses coins, ajoutez-en avec l'outil Fenêtre, reposez le repère si besoin (pieds des murs + faîte). <b>Fenêtre fausse :</b> clic droit dessus, ou survol + touche Suppr (Ctrl+Z la rétablit).</p>
       <div class="toolbar">
         <button type="button" class="ghost" id="pl-add">Ajouter des plans</button>
         <input type="file" id="pl-file" accept=".pdf,image/png,image/jpeg" multiple hidden>
@@ -328,6 +328,7 @@ body.noscroll{overflow:hidden}
         <span class="sep"></span>
         <button type="button" class="tool" data-tool="pan" aria-pressed="true" title="Déplacer (glisser) · molette = zoom">Déplacer</button>
         <button type="button" class="tool" data-tool="rect" aria-pressed="false" title="Glisser un rectangle sur la baie · tirer les coins d'une fenêtre existante pour la corriger">Fenêtre</button>
+        <button type="button" class="ghost" id="pl-same" disabled title="Cherche sur la page toutes les fenêtres semblables à la dernière fenêtre encadrée (modèle)">Identiques</button>
         <button type="button" class="tool" data-tool="ref" aria-pressed="false" title="3 clics : pied du mur gauche, pied du mur droit, faîte">Repère façade</button>
         <button type="button" class="tool" data-tool="photo" aria-pressed="false" title="Photo de façade : cliquez les 4 angles du mur (2 pieds, 2 égouts) pour la redresser à l'échelle de la 3D">Redresser photo</button>
         <button type="button" class="tool" id="pl-full" aria-pressed="false" title="Plein écran (touche F) · Échap pour sortir">Plein écran</button>
@@ -2572,7 +2573,7 @@ function measureLabel(p, m){
   return '';
 }
 function css(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#000'; }
-function draw(){
+function draw(){ updSameBtn();
   const ctx = V.cv.getContext('2d'), p = plan();
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, V.cv.width, V.cv.height);
   $('pl-ph').hidden = !!p;
@@ -2768,7 +2769,7 @@ function finishRect(){
     <div class="field"><label for="w-niv">Niveau</label><select id="w-niv">${opt(['', ...NIVEAUX], roofFac ? 'Combles' : (S.lastNiveau || ''))}</select></div>
     ${rf ? `<span class="note" style="flex-basis:100%">Au-dessus du mur 3D : fenêtre de <b>toiture</b>${roofFac ? ` — hauteur vraie ${fmt(roofH(roofFac, hh))} m (pente)` : ' — façade pignon : vérifiez (cheminée ?)'}.</span>` : ''}
     <div class="field"><label for="w-nb">Nombre</label><input type="number" id="w-nb" min="1" step="1" value="1" style="width:70px"></div>
-    <button type="button" id="w-ok">Ajouter aux fenêtres</button><button type="button" class="ghost" id="w-no">Annuler</button>`);
+    <button type="button" id="w-ok">Ajouter aux fenêtres</button><button type="button" id="w-same" title="Ajoute cette fenêtre, puis cherche sur la page toutes celles qui lui ressemblent">Ajouter + trouver les identiques</button><button type="button" class="ghost" id="w-no">Annuler</button>`);
   const tmp = { type: 'rect', pts: d.pts, tmp: true }; p.measures.push(tmp); draw();
   $('w-no').onclick = () => { p.measures = p.measures.filter((m) => m !== tmp); $('pl-pending').innerHTML = ''; draw(); };
   $('w-ok').onclick = () => {
@@ -2777,10 +2778,16 @@ function finishRect(){
     if(isPan) f.hPlan = +hh.toFixed(3);
     S.lastFacade = f.facade; S.lastNiveau = f.niveau;
     S.extra.fenetres.push(f); delete tmp.tmp; tmp.uid = f.uid; updatePositions(p);
-    $('pl-pending').innerHTML = ''; renderList(); draw(); renderComp(); complementsChanged();
+    $('pl-pending').innerHTML = ''; renderList(); draw(); renderComp(); complementsChanged(); V.lastRect = tmp; updSameBtn();
     status(`F-${String(S.extra.fenetres.length).padStart(2, '0')} ajoutée : ${fmt(f.l)} × ${fmt(f.h)} m, ${f.facade || 'façade à préciser'}.`);
   };
+  $('w-same').onclick = () => { $('w-ok').onclick(); runSame(p, tmp); };
 }
+// bouton « Identiques » : modèle = dernière fenêtre posée ou corrigée sur la page affichée
+function sameSeed(){ const p = plan(); if(!p) return null; const rs = p.measures.filter((m) => m.type === 'rect' && m.uid && !m.tmp);
+  return rs.includes(V.lastRect) ? V.lastRect : rs[rs.length - 1] || null; }
+function updSameBtn(){ const b = $('pl-same'); if(b) b.disabled = !sameSeed() || !(plan() && plan().mPerPx); }
+$('pl-same').onclick = () => { const m = sameSeed(); if(!m){ pending('<span>Encadrez d\'abord une fenêtre avec l\'outil <b>Fenêtre</b> : elle sert de modèle.</span>'); return; } runSame(plan(), m); };
 function refreshWindowsFromPlan(p){ // échelle modifiée : recalcule les fenêtres issues de ce plan
   if(!p.mPerPx) return;
   p.measures.filter((m) => m.type === 'rect' && m.uid).forEach((m) => {
@@ -3364,6 +3371,104 @@ function runDetect(zone){
     showCands(); status(`${V.cands.length} fenêtre(s) détectée(s) en ${Math.round(performance.now() - t0)} ms.`);
   }, 20);
 }
+// ---- « Trouver les identiques » : une fenêtre encadrée à la main sert de modèle ; on cherche ses répétitions sur la page
+//      par corrélation normalisée (NCC). PDF vectoriel : image des seuls TRAITS (ni ombres ni aplats) → insensible aux
+//      ombres portées ; plan scanné : niveaux de gris. Recherche grossière (modèle ~16 px de large), puis recalage fin (~40 px).
+function lineRaster(p, c, box, ori){              // image (0..1, 1 = trait foncé) du plan p à l'échelle c (px image / px plan) sur box ; ori 'h' / 'v' : traits horizontaux / verticaux seuls
+  const [bx0, by0, bx1, by1] = box, W = Math.max(8, Math.ceil((bx1 - bx0) * c)), H = Math.max(8, Math.ceil((by1 - by0) * c));
+  let I;
+  if(p.snapIdx && p.snapIdx.n > 200){
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const cx = cv.getContext('2d', { willReadFrequently: true });
+    cx.fillStyle = '#000'; cx.fillRect(0, 0, W, H); cx.lineWidth = 1; cx.lineCap = 'round';
+    const S0 = p.snapIdx.segs, C0 = p.snapIdx.col || new Uint32Array(p.snapIdx.n), buckets = [...Array(10)].map(() => []);
+    for(let i = 0; i < p.snapIdx.n; i++){ const col = C0[i]; if(col & 0x1000000) continue;   // aplats : ignorés
+      const x1 = S0[4*i], y1 = S0[4*i+1], x2 = S0[4*i+2], y2 = S0[4*i+3];
+      if(Math.max(x1, x2) < bx0 || Math.min(x1, x2) > bx1 || Math.max(y1, y2) < by0 || Math.min(y1, y2) > by1) continue;
+      const lum = (((col >> 16) & 255) * 0.299 + ((col >> 8) & 255) * 0.587 + (col & 255) * 0.114) / 255; if(lum > 0.9) continue;
+      if(ori){ const dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1), L = Math.hypot(dx, dy); if(L < 1e-6) continue; const o = dy <= 0.15 * L ? 'h' : dx <= 0.15 * L ? 'v' : 'd'; if(o !== ori) continue; }
+      buckets[Math.min(9, Math.floor((1 - lum) * 10))].push(i); }
+    buckets.forEach((ids, b) => { if(!ids.length) return; const v = Math.round(255 * (b + 0.5) / 10); cx.strokeStyle = `rgb(${v},${v},${v})`; cx.beginPath();
+      ids.forEach((i) => { cx.moveTo((S0[4*i] - bx0) * c, (S0[4*i+1] - by0) * c); cx.lineTo((S0[4*i+2] - bx0) * c, (S0[4*i+3] - by0) * c); }); cx.stroke(); });
+    const d = cx.getImageData(0, 0, W, H).data; I = new Float32Array(W * H); for(let i = 0; i < W * H; i++) I[i] = d[4*i] / 255;
+  } else {
+    const g = regionGray(p, bx0, by0, bx1 - bx0, by1 - by0, W, H); I = new Float32Array(W * H); for(let i = 0; i < W * H; i++) I[i] = 1 - g[i];
+    if(ori){ const J = new Float32Array(W * H);                 // plan scanné : gradient vertical (traits h) ou horizontal (traits v)
+      for(let y = 1; y < H - 1; y++) for(let x = 1; x < W - 1; x++){ const i = y * W + x; J[i] = ori === 'h' ? Math.max(0, I[i] - 0.5 * (I[i - W] + I[i + W]) + 0.5 * Math.abs(I[i - W] - I[i + W])) : Math.max(0, I[i] - 0.5 * (I[i - 1] + I[i + 1]) + 0.5 * Math.abs(I[i - 1] - I[i + 1])); }
+      I = J; }
+  }
+  // flou 3×3 (deux passes de moyenne) : tolère le léger décalage des traits
+  for(let pass = 0; pass < 2; pass++){ const J = new Float32Array(W * H);
+    for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){ let s = 0, n = 0; for(let dy = -1; dy <= 1; dy++){ const yy = y + dy; if(yy < 0 || yy >= H) continue; for(let dx = -1; dx <= 1; dx++){ const xx = x + dx; if(xx < 0 || xx >= W) continue; s += I[yy * W + xx]; n++; } } J[y * W + x] = s / n; }
+    I = J; }
+  return { I, W, H, c, x0: bx0, y0: by0 };
+}
+function nccMap(Rs, Ts, tw, th, x0, y0, x1, y1, step){   // NCC à plusieurs canaux (traits h + traits v) du modèle sur les images, positions [x0,x1]×[y0,y1]
+  const W = Rs[0].W, N = tw * th, K = Rs.length, Tz = [], Tm = []; let tn = 0;
+  for(let k = 0; k < K; k++){ const T = Ts[k]; let tm = 0; for(let i = 0; i < N; i++) tm += T[i]; tm /= N;
+    const z = new Float32Array(N), m = new Float32Array(N);
+    for(let y = 0; y < th; y++) for(let x = 0; x < tw; x++){ const v = T[y * tw + x] - tm; z[y * tw + x] = v; m[y * tw + (tw - 1 - x)] = v; tn += v * v; }
+    Tz.push(z); Tm.push(m); }
+  tn = Math.sqrt(tn) || 1; const out = [];
+  for(let y = y0; y <= y1; y += step) for(let x = x0; x <= x1; x += step){
+    let vr = 0, a = 0, b = 0;
+    for(let k = 0; k < K; k++){ const I = Rs[k].I, z = Tz[k], m = Tm[k]; let s1 = 0, s2 = 0;
+      for(let ty = 0; ty < th; ty++){ const ro = (y + ty) * W + x, to = ty * tw;
+        for(let tx = 0; tx < tw; tx++){ const v = I[ro + tx]; s1 += v; s2 += v * v; a += z[to + tx] * v; b += m[to + tx] * v; } }
+      vr += s2 - s1 * s1 / N; }
+    if(vr < 0.0009 * N * K) continue;
+    out.push([x, y, Math.max(a, b) / (tn * Math.sqrt(vr))]); }
+  return out;
+}
+function findSimilar(p, seed){
+  const sx0 = Math.min(seed[0][0], seed[1][0]), sy0 = Math.min(seed[0][1], seed[1][1]), sx1 = Math.max(seed[0][0], seed[1][0]), sy1 = Math.max(seed[0][1], seed[1][1]);
+  const w = sx1 - sx0, h = sy1 - sy0; if(w < 4 || h < 4) return [];
+  const mx = 0.25 * w, my = 0.15 * h, box = [0, 0, p.w, p.h];
+  const tplOf = (R) => { const tx0 = Math.round((sx0 - mx - R.x0) * R.c), ty0 = Math.round((sy0 - my - R.y0) * R.c), tw = Math.round((w + 2 * mx) * R.c), th = Math.round((h + 2 * my) * R.c);
+    const T = new Float32Array(tw * th); for(let y = 0; y < th; y++) for(let x = 0; x < tw; x++){ const xx = tx0 + x, yy = ty0 + y; T[y * tw + x] = xx >= 0 && yy >= 0 && xx < R.W && yy < R.H ? R.I[yy * R.W + xx] : 0; }
+    return { T, tw, th }; };
+  // 1) grossier, pas de 2 px puis recalage ±1
+  const HV = (c, bx) => ['h', 'v'].map((o) => lineRaster(p, c, bx, o));
+  const RC = HV(16 / w, box), TCs = RC.map(tplOf), TC = TCs[0], TT = TCs.map((t) => t.T), RC0 = RC[0];
+  let cs = nccMap(RC, TT, TC.tw, TC.th, 0, 0, RC0.W - TC.tw, RC0.H - TC.th, 2).filter((q) => q[2] > 0.4).sort((a, b) => b[2] - a[2]);
+  const peaks = [];
+  for(const q of cs){ if(peaks.length >= 120) break; if(peaks.some((r) => Math.abs(r[0] - q[0]) < TC.tw * 0.6 && Math.abs(r[1] - q[1]) < TC.th * 0.6)) continue;
+    const loc = nccMap(RC, TT, TC.tw, TC.th, Math.max(0, q[0] - 1), Math.max(0, q[1] - 1), Math.min(RC0.W - TC.tw, q[0] + 1), Math.min(RC0.H - TC.th, q[1] + 1), 1);
+    peaks.push(loc.reduce((m, r) => (r[2] > m[2] ? r : m), q)); }
+  // 2) recalage fin autour de chaque pic
+  const cf = 40 / w, res = [];
+  const RS = HV(cf, [sx0 - mx - 2, sy0 - my - 2, sx1 + mx + 2, sy1 + my + 2]), TSs = RS.map(tplOf), TS = TSs[0];
+  peaks.forEach(([x, y, sc]) => {
+    const px0 = x / RC0.c + RC0.x0, py0 = y / RC0.c + RC0.y0, pad = 3 / RC0.c;           // coin du modèle (avec marge) en px plan
+    const RF = HV(cf, [px0 - pad, py0 - pad, px0 + w + 2 * mx + pad, py0 + h + 2 * my + pad]), RF0 = RF[0];
+    const fine = nccMap(RF, TSs.map((t) => t.T), TS.tw, TS.th, 0, 0, Math.max(0, RF0.W - TS.tw), Math.max(0, RF0.H - TS.th), 1);
+    const best = fine.reduce((m, r) => (!m || r[2] > m[2] ? r : m), null);
+    const fx = best ? best[0] / cf + RF0.x0 : px0, fy = best ? best[1] / cf + RF0.y0 : py0;
+    res.push({ pts: [[fx + mx, fy + my], [fx + mx + w, fy + my + h]], score: sc, fine: best ? best[2] : 0 }); });
+  // doublons (après recalage)
+  const out = []; res.sort((a, b) => b.score - a.score).forEach((r) => { if(!out.some((o) => Math.abs(o.pts[0][0] - r.pts[0][0]) < w * 0.5 && Math.abs(o.pts[0][1] - r.pts[0][1]) < h * 0.5)) out.push(r); });
+  return out;
+}
+function runSame(p, meas){
+  if(!p || !meas) return; const f = S.extra.fenetres.find((x) => x.uid === meas.uid);
+  status('Recherche des fenêtres identiques…');
+  setTimeout(() => {
+    const t0 = performance.now(); let all = findSimilar(p, meas.pts);
+    const iou = (a, b) => { const ix = Math.max(0, Math.min(a[1][0], b[1][0]) - Math.max(a[0][0], b[0][0])), iy = Math.max(0, Math.min(a[1][1], b[1][1]) - Math.max(a[0][1], b[0][1]));
+      const A = (a[1][0] - a[0][0]) * (a[1][1] - a[0][1]), B = (b[1][0] - b[0][0]) * (b[1][1] - b[0][1]); return ix * iy / (A + B - ix * iy || 1); };
+    const rects = p.measures.filter((m) => m.type === 'rect' && !m.tmp);
+    all = all.filter((c) => !rects.some((m) => iou(m.pts, c.pts) > 0.3));                // déjà posées (dont le modèle)
+    const l = Math.abs(meas.pts[1][0] - meas.pts[0][0]) * p.mPerPx, hh = Math.abs(meas.pts[1][1] - meas.pts[0][1]) * p.mPerPx;
+    // seuil par défaut : la plus forte chute de ressemblance qui retombe dans le bruit (< 72 %) : les vraies répétitions s'en détachent
+    const sc = all.map((c) => c.score).sort((a, b) => b - a); let th = 0.70, gap = 0.06;
+    for(let i = 0; i + 1 < sc.length; i++){ if(sc[i] < 0.55 || sc[i + 1] >= 0.72 || sc[i + 1] < 0.45) continue; if(sc[i] - sc[i + 1] > gap){ gap = sc[i] - sc[i + 1]; th = (sc[i] + sc[i + 1]) / 2; } }
+    V.sameTh = Math.min(0.85, Math.max(0.55, th)); V.sameSeed = f || null;
+    all = all.filter((c) => c.score >= Math.max(0.5, V.sameTh - 0.12));                    // le reste : bruit, non affiché
+    V.cands = all.map((c) => ({ pts: c.pts, l: f ? f.l : l, h: f ? (f.hPlan || f.h) : hh, score: c.score, on: c.score >= V.sameTh }));
+    V.candPlan = p; V.candRef = null; V.candFac = f && f.facade && !/^Pan /.test(f.facade) ? f.facade : undefined; setTool('detect'); draw();
+    if(!V.cands.length){ pending('<span>Aucune fenêtre semblable trouvée sur cette page.</span>'); status(''); return; }
+    showCands(); status(`${V.cands.filter((c) => c.on).length} fenêtre(s) identique(s) trouvée(s) en ${Math.round(performance.now() - t0)} ms — réglez le seuil si besoin.`);
+  }, 20);
+}
 function candGroups(){
   const g = {}; V.cands.filter((c) => c.on).forEach((c) => { const k = `${c.l.toFixed(2)}×${c.h.toFixed(2)}`; g[k] = (g[k] || 0) + 1; });
   return Object.entries(g).sort((a, b) => b[1] - a[1]);
@@ -3384,7 +3489,9 @@ function showCands(){
   const cnt = { noir: 0, rouge: 0, jaune: 0 }; V.cands.forEach((c) => { cnt[c.color || 'noir']++; });
   const colSel = (cnt.rouge || cnt.jaune) ? `<div class="field"><label for="d-colf">Traits</label><select id="d-colf">
       <option value="all">Tous (${V.cands.length})</option><option value="exist">Existant : sans rouge (${cnt.noir + cnt.jaune})</option><option value="proj">Projet : sans jaune (${cnt.noir + cnt.rouge})</option></select></div>` : '';
-  pending(`<div class="field"><label>Détection</label><span class="big">${on.length} / ${V.cands.length} fenêtres</span></div>${colSel}
+  const same = V.cands.some((c) => c.score != null);
+  const sameSel = same ? `<div class="field"><label for="d-th">Ressemblance ≥ <b id="d-thv">${Math.round(V.sameTh * 100)} %</b></label><input type="range" id="d-th" min="40" max="95" step="1" value="${Math.round(V.sameTh * 100)}" style="width:150px"></div>` : '';
+  pending(`<div class="field"><label>${same ? 'Identiques' : 'Détection'}</label><span class="big">${on.length} / ${V.cands.length} fenêtres</span></div>${sameSel}${colSel}
     <div class="field" style="max-width:320px"><label>Dimensions (l × h, m)</label><span class="mono" style="font-size:12px">${gr.map(([k, n]) => `${n}× ${k}`).join(' · ') || '—'}</span></div>
     <div class="field"><label for="d-fac">Façade</label><select id="d-fac">${opt(['', ...facadeOptions().filter((o) => !/^Pan /.test(o))], fac0)}</select></div>
     <div class="field"><label for="d-niv">Niveau</label><select id="d-niv">${opt(['', ...NIVEAUX], '')}</select></div>
@@ -3392,9 +3499,12 @@ function showCands(){
     <span style="flex-basis:100%">${roofTxt}</span>
     <span class="note" style="flex-basis:100%">Clic dans une fenêtre : l'exclure / la réintégrer. Glisser un coin ou un bord : la corriger (avec accrochage ; Alt = libre). Les portes au sol ne sont pas détectées : outil Fenêtre.</span>`);
   $('d-fac').onchange = (e) => { V.candFac = e.target.value; showCands(); draw(); };
+  if($('d-th')) $('d-th').oninput = (e) => { V.sameTh = +e.target.value / 100; $('d-thv').textContent = e.target.value + ' %';
+    V.cands.forEach((c) => { c.on = c.roof !== 'chem' && c.score >= V.sameTh; }); const n = V.cands.filter((c) => c.on).length;
+    const big = $('pl-pending').querySelector('.big'); if(big) big.textContent = `${n} / ${V.cands.length} fenêtres`; const ok = $('d-ok'); if(ok){ ok.disabled = !n; ok.textContent = `Ajouter ${n} fenêtre(s)`; } draw(); };
   if($('d-colf')){ $('d-colf').value = V.colf || 'all';
     $('d-colf').onchange = (e) => { V.colf = e.target.value; V.cands.forEach((c) => { c.on = c.roof !== 'chem' && (V.colf === 'all' || (V.colf === 'exist' ? c.color !== 'rouge' : c.color !== 'jaune')); }); showCands(); draw(); }; }
-  $('d-no').onclick = () => { V.cands = null; V.candFac = undefined; $('pl-pending').innerHTML = ''; draw(); status(''); };
+  $('d-no').onclick = () => { V.cands = null; V.candFac = undefined; V.sameSeed = null; $('pl-pending').innerHTML = ''; draw(); status(''); };
   $('d-ok').onclick = () => {
     const fac = $('d-fac').value, niv = $('d-niv').value; let n = 0;
     let autoRef = '';
@@ -3402,8 +3512,10 @@ function showCands(){
     let nR = 0;
     V.cands.filter((c) => c.on).forEach((c) => {
       const roof = c.roof === true && fac && panFor(fac);
-      const f = { uid: uid(), niveau: roof ? 'Combles' : niv, facade: roof ? 'Pan ' + fac : fac, nombre: 1, l: +c.l.toFixed(3), h: +(roof ? roofH('Pan ' + fac, c.h) : c.h).toFixed(3),
-        note: `${roof ? 'fenêtre de toit, h. vraie (pente) — ' : ''}détection auto — plan ${p.name}${p.pages > 1 ? ' p.' + p.page : ''}` };
+      // identiques : sans niveau choisi, celles de la même rangée que le modèle prennent son niveau
+      const sd = V.sameSeed, sm = sd && c.score != null && p.measures.find((m) => m.uid === sd.uid), row = sm && Math.abs((c.pts[0][1] + c.pts[1][1]) / 2 - (sm.pts[0][1] + sm.pts[1][1]) / 2) < 0.3 * Math.abs(sm.pts[1][1] - sm.pts[0][1]);
+      const f = { uid: uid(), niveau: roof ? 'Combles' : (niv || (row ? sd.niveau || '' : '')), facade: roof ? 'Pan ' + fac : fac, nombre: 1, l: +c.l.toFixed(3), h: +(roof ? roofH('Pan ' + fac, c.h) : c.h).toFixed(3),
+        note: `${roof ? 'fenêtre de toit, h. vraie (pente) — ' : ''}${c.score != null ? `identique (${Math.round(c.score * 100)} %)` : 'détection auto'} — plan ${p.name}${p.pages > 1 ? ' p.' + p.page : ''}` };
       if(roof){ f.hPlan = +c.h.toFixed(3); nR++; }
       S.extra.fenetres.push(f); p.measures.push({ type: 'rect', pts: c.pts, uid: f.uid }); n++;
     });
@@ -3472,7 +3584,7 @@ function endEdit(){
   const pts = e.ed.obj.pts, n = [[Math.min(pts[0][0], pts[1][0]), Math.min(pts[0][1], pts[1][1])], [Math.max(pts[0][0], pts[1][0]), Math.max(pts[0][1], pts[1][1])]];
   e.ed.obj.pts = n; const p = plan();
   if(e.ed.kind === 'cand'){ e.ed.obj.l = (n[1][0] - n[0][0]) * p.mPerPx; e.ed.obj.h = (n[1][1] - n[0][1]) * p.mPerPx; showCands(); }
-  else { refreshWindowsFromPlan(p); renderList(); const f = S.extra.fenetres.find((x) => x.uid === e.ed.obj.uid); if(f) status(`Fenêtre corrigée : ${fmt(f.l)} × ${fmt(f.h)} m.`); }
+  else { V.lastRect = e.ed.obj; refreshWindowsFromPlan(p); renderList(); const f = S.extra.fenetres.find((x) => x.uid === e.ed.obj.uid); if(f) status(`Fenêtre corrigée : ${fmt(f.l)} × ${fmt(f.h)} m.`); }
   draw();
 }
 function drawHandles(ctx){
@@ -3792,7 +3904,7 @@ $('pl-auto').onclick = () => {
     if(idx.length) go(idx[0]);
   };
 };
-window.__m3d.elevGeom = (i, f) => elevGeom(S.plans[i], f); window.__m3d.detect = (i, z) => detectWindows(S.plans[i], z);
+window.__m3d.elevGeom = (i, f) => elevGeom(S.plans[i], f); window.__m3d.detect = (i, z) => detectWindows(S.plans[i], z); window.__m3d.findSimilar = (i, pts) => findSimilar(S.plans[i], pts);
 function sideLenOrig(o){ const b = S.b ? (S.b.__k ? S.b.__orig : S.b) : S.bOrig; if(!b) return NaN; const L = sideLens(b); return L[o]; }   // bâtiment séparé, sans correction de longueurs
 
 // ============================================================ photo de façade : redressement (homographie) + échelle 3D
