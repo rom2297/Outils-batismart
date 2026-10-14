@@ -684,7 +684,10 @@ body.noscroll{overflow:hidden}
       if (out.length >= 3 && out.every((p) => Math.abs(f(p)) < 0.1)) return null;   // lamelle de l'autre bâtiment le long de la coupe
       return out.length >= 3 ? out : null; };
     const used = [];
-    for (const L of lines) {
+    for (const L0 of lines) {
+      // ligne recalée sur le mur 3D qui la longe (le cadastre et le modèle peuvent diverger de 1-2 m sur les anciennes tuiles)
+      let L = L0; { const w = wallLine(b0, L0.a, L0.b); if (w) { const pr = (q) => { const t = (q[0] - w.p[0]) * w.d[0] + (q[1] - w.p[1]) * w.d[1]; return [w.p[0] + w.d[0] * t, w.p[1] + w.d[1] * t]; };
+        L = { a: pr(L0.a), b: pr(L0.b), snapped: true }; } }
       const ux = L.b[0] - L.a[0], uy = L.b[1] - L.a[1], m = Math.hypot(ux, uy); if (m < 0.1) continue;
       let nx = -uy / m, ny = ux / m; if ((keep[0] - L.a[0]) * nx + (keep[1] - L.a[1]) * ny < 0) { nx = -nx; ny = -ny; }
       const f = (p) => (p[0] - L.a[0]) * nx + (p[1] - L.a[1]) * ny, g = (p) => -f(p);
@@ -733,6 +736,24 @@ body.noscroll{overflow:hidden}
     return kept.footprint ? { kept, rest } : null;
   }
 
+  /* Mur du modèle 3D qui longe une ligne tracée sur le cadastre (a→c) : faces verticales à ±12°, à moins de 2 m de la ligne,
+     sur au moins 30 % de sa longueur ; les faces d'un même plan sont cumulées. Rend la droite du mur { p, d } (même sens que a→c) ou null. */
+  function wallLine(b0, a, c, maxD = 2, maxAng = 12) {
+    const L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.5) return null;
+    const u = [(c[0] - a[0]) / L, (c[1] - a[1]) / L], en = [u[1], -u[0]], cosA = Math.cos(maxAng * Math.PI / 180), P = new Map();
+    b0.faces.forEach((t) => { const n = newell(t), h = Math.hypot(n[0], n[1]), m = norm(n); if (m < 1e-9 || h < 1e-9 || Math.abs(n[2]) / m > 0.05) return;
+      let nx = n[0] / h, ny = n[1] / h; if (nx * en[0] + ny * en[1] < 0) { nx = -nx; ny = -ny; } if (nx * en[0] + ny * en[1] < cosA) return;
+      const ts = t.map((p) => (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1]), t0 = Math.max(0, Math.min(...ts)), t1 = Math.min(L, Math.max(...ts)); if (t1 - t0 < 0.2) return;
+      const ds = t.map((p) => (p[0] - a[0]) * en[0] + (p[1] - a[1]) * en[1]); if (Math.max(...ds.map(Math.abs)) > maxD) return;
+      const d = t[0][0] * nx + t[0][1] * ny, key = Math.round(Math.atan2(ny, nx) * 60) + '|' + Math.round(d * 5);
+      const g = P.get(key) || { nx, ny, d, A: 0, t0: Infinity, t1: -Infinity, dm: 0 }; g.A += m / 2; g.t0 = Math.min(g.t0, t0); g.t1 = Math.max(g.t1, t1); g.dm = ds.reduce((s, v) => s + Math.abs(v), 0) / ds.length; P.set(key, g); });
+    let best = null, bs = 0;
+    P.forEach((g) => { if (g.t1 - g.t0 < 0.3 * L) return; const sc = g.A * (g.t1 - g.t0) / L / (0.3 + g.dm); if (sc > bs) { bs = sc; best = g; } });
+    if (!best) return null;
+    const da = a[0] * best.nx + a[1] * best.ny - best.d, sg = -best.ny * u[0] + best.nx * u[1] >= 0 ? 1 : -1;
+    return { p: [a[0] - best.nx * da, a[1] - best.ny * da], d: [-best.ny * sg, best.nx * sg] };
+  }
+
   /* Isolement d'un bâtiment dans un volume 3D qui regroupe tout un îlot (anciennes tuiles, p. ex. Vaud 2015-2020) :
      on garde la partie du solide à l'intérieur de l'emprise poly ([[E,N],…], p. ex. la parcelle bâtie du cadastre),
      et on ferme par des murs mitoyens le long des côtés de l'emprise qui traversent l'îlot. Rend { kept, rest } ou null. */
@@ -744,34 +765,19 @@ body.noscroll{overflow:hidden}
     const zsAt = (x, y) => { const zs = []; for (const h of HZ0) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
       zs.push(h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2]); } return zs.sort((a, c) => a - c); };
     const inSolid0 = (x, y, z) => zsAt(x, y).filter((zz) => zz > z).length % 2 === 1;
-    // côtés de l'emprise recalés sur les murs du modèle : un côté tracé sur le cadastre tombe souvent à quelques décimètres du mur
-    // 3D (p. ex. dans le bâtiment voisin plus haut) → on le pose exactement sur la face verticale parallèle la plus proche (≤ 0.8 m)
-    { const VF0 = b0.faces.map((t) => { const n = newell(t), h = Math.hypot(n[0], n[1]), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m > 0.05 || h < 1e-9) return null;
-        const nx = n[0] / h, ny = n[1] / h, d = t[0][0] * nx + t[0][1] * ny, ts = t.map((p) => -p[0] * ny + p[1] * nx);
-        return { nx, ny, d, s0: Math.min(...ts), s1: Math.max(...ts), A: m / 2 }; }).filter(Boolean);
-      const n = ring.length, lines = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1; return { p: [a[0], a[1]], d: [(c[0] - a[0]) / L, (c[1] - a[1]) / L], L }; });
-      let moved = false;
-      lines.forEach((ln, k) => { if (ln.L < 1) return; const a = ring[k], c = ring[(k + 1) % n], en = [ln.d[1], -ln.d[0]];
-        let best = null, bs = 0;
-        VF0.forEach((f) => { if (Math.abs(f.nx * en[0] + f.ny * en[1]) < 0.985) return;
-          const da = a[0] * f.nx + a[1] * f.ny - f.d, dc = c[0] * f.nx + c[1] * f.ny - f.d; if (Math.abs(da) > 0.8 || Math.abs(dc) > 0.8 || Math.abs(da - dc) > 0.3) return;
-          const sa = -a[0] * f.ny + a[1] * f.nx, sc = -c[0] * f.ny + c[1] * f.nx, ov = Math.min(Math.max(sa, sc), f.s1) - Math.max(Math.min(sa, sc), f.s0);
-          if (ov < 0.3 * Math.min(ln.L, f.s1 - f.s0)) return; const sc2 = f.A * ov / (0.2 + Math.abs(da + dc) / 2); if (sc2 > bs) { bs = sc2; best = f; } });
-        if (best) { const da = a[0] * best.nx + a[1] * best.ny - best.d; ln.p = [a[0] - best.nx * da, a[1] - best.ny * da]; const sg = best.nx * en[0] + best.ny * en[1] > 0 ? 1 : -1; ln.d = [-best.ny * sg, best.nx * sg]; moved = true; } });
-      if (moved) ring = ring.map((v, k) => { const A = lines[(k - 1 + n) % n], B = lines[k], cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
-        if (Math.abs(cr) < 0.2) return [B.p[0], B.p[1]];
-        const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr; return [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t]; });
-      PG[0] = [...ring, ring[0]]; }
-    // côtés de l'emprise : « coupe » s'il y a encore du bâtiment à 1.5 m au-delà (îlot), sinon façade réelle. Le cadastre et le
-    // modèle 3D ne coïncident pas au décimètre : une façade réelle est repoussée de 1.5 m vers l'extérieur pour ne rien rogner.
-    { const n = ring.length, off = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.05) return 0;
-        const ox = (c[1] - a[1]) / L, oy = -(c[0] - a[0]) / L; let hit = 0, tot = 0;               // normale extérieure (CCW)
-        for (let j = 1; j < 10; j++) { const s = j / 10; tot++; if (zsAt(a[0] + (c[0] - a[0]) * s + ox * 1.5, a[1] + (c[1] - a[1]) * s + oy * 1.5).length >= 2) hit++; }
-        return hit / tot >= 0.5 ? 0 : 1.5; });
-      const line = (k) => { const a = ring[k], c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1, ox = (c[1] - a[1]) / L, oy = -(c[0] - a[0]) / L;
-        return { p: [a[0] + ox * off[k], a[1] + oy * off[k]], d: [(c[0] - a[0]) / L, (c[1] - a[1]) / L] }; };
-      ring = ring.map((v, k) => { const k0 = (k - 1 + n) % n; if (!off[k0] && !off[k]) return v; const A = line(k0), B = line(k), cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
-        if (Math.abs(cr) < 0.2) { const kk = off[k] ? k : k0, Lk = line(kk), a = ring[kk]; return [v[0] + Lk.p[0] - a[0], v[1] + Lk.p[1] - a[1]]; }   // côtés presque alignés
+    // côtés de l'emprise : « coupe » s'il y a encore du bâtiment à 1.5 m au-delà (îlot), sinon façade réelle.
+    // Le cadastre et le modèle 3D ne coïncident pas (jusqu'à 1-2 m et quelques degrés sur les anciennes tuiles) :
+    //  - une façade réelle est repoussée de 1.5 m vers l'extérieur pour ne rien rogner ;
+    //  - une coupe est recalée sur le mur 3D le plus proche qui la longe (mur du voisin plus haut), sinon on trancherait le voisin.
+    { const n = ring.length, lines = ring.map((a, k) => { const c = ring[(k + 1) % n], L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+        const d = [(c[0] - a[0]) / L, (c[1] - a[1]) / L], o = [d[1], -d[0]];                       // o : normale extérieure (CCW)
+        let hit = 0; for (let j = 1; j < 10; j++) { const s = j / 10; if (zsAt(a[0] + (c[0] - a[0]) * s + o[0] * 1.5, a[1] + (c[1] - a[1]) * s + o[1] * 1.5).length >= 2) hit++; }
+        const cut = hit >= 5; let p = [a[0], a[1]], dd = d;
+        if (!cut && L > 0.05) p = [a[0] + o[0] * 1.5, a[1] + o[1] * 1.5];
+        else if (cut) { const w = wallLine(b0, a, c); if (w) { p = w.p; dd = w.d; } }
+        return { p, d: dd }; });
+      ring = ring.map((v, k) => { const A = lines[(k - 1 + n) % n], B = lines[k], cr = A.d[0] * B.d[1] - A.d[1] * B.d[0];
+        if (Math.abs(cr) < 0.2) { const t = (v[0] - B.p[0]) * B.d[0] + (v[1] - B.p[1]) * B.d[1]; return [B.p[0] + B.d[0] * t, B.p[1] + B.d[1] * t]; }   // côtés presque alignés
         const t = ((B.p[0] - A.p[0]) * B.d[1] - (B.p[1] - A.p[1]) * B.d[0]) / cr; return [A.p[0] + A.d[0] * t, A.p[1] + A.d[1] * t]; });
       PG[0] = [...ring, ring[0]]; }
     const inPoly = (x, y) => pointInRing(x, y, ring);
