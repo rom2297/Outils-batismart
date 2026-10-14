@@ -571,6 +571,42 @@ body.noscroll{overflow:hidden}
     return best;
   }
 
+  /* Décalage d'un anneau (ouvert, CCW) de d mètres vers l'extérieur (d < 0 : vers l'intérieur), angles en onglet. */
+  function offsetRing(r, d) {
+    const n = r.length, out = [];
+    for (let i = 0; i < n; i++) {
+      const a = r[(i - 1 + n) % n], b = r[i], c = r[(i + 1) % n];
+      const l1 = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, l2 = Math.hypot(c[0] - b[0], c[1] - b[1]) || 1;
+      const n1 = [(b[1] - a[1]) / l1, -(b[0] - a[0]) / l1], n2 = [(c[1] - b[1]) / l2, -(c[0] - b[0]) / l2];   // normales extérieures (CCW)
+      const k = 1 + n1[0] * n2[0] + n1[1] * n2[1];
+      if (k < 0.1) { out.push([b[0] + n1[0] * d, b[1] + n1[1] * d], [b[0] + n2[0] * d, b[1] + n2[1] * d]); continue; }   // pointe très aiguë : onglet coupé
+      out.push([b[0] + (n1[0] + n2[0]) * d / k, b[1] + (n1[1] + n2[1]) * d / k]);
+    }
+    return out;
+  }
+  /* Union de faces planes projetées (triangles du modèle) qui se touchent par un côté. Les sommets du modèle ne tombent pas
+     exactement sur les côtés voisins (écarts de quelques mm) : l'union directe laisse des fentes et rend plusieurs morceaux
+     (p. ex. dalle de base en gradins → emprise réduite à une seule marche). On grossit chaque face de d, on unit, on rétrécit de d.
+     Rend des polygones [[anneau extérieur ouvert CCW, …trous ouverts]], en coordonnées absolues. */
+  function unionClosed(faces2D, d = 0.03) {
+    if (!faces2D.length) return [];
+    const x0 = faces2D[0][0][0], y0 = faces2D[0][0][1];
+    const rings = faces2D.map((t) => { let r = t.map((p) => [p[0] - x0, p[1] - y0]); if (ringArea(r) < 0) r = r.reverse(); return r; })
+      .filter((r) => r.length >= 3 && Math.abs(ringArea(r)) > 1e-6).map((r) => { const o = offsetRing(r, d); return [[...o, o[0]]]; });
+    if (!rings.length) return [];
+    let u; try { u = PC.union(...rings); } catch (e) { return []; }
+    // sommets d'origine : après le rétrécissement, chaque angle est recollé sur le sommet du modèle le plus proche (angles exacts,
+    // sinon les murs voisins ne se rejoignent plus au millimètre)
+    const src = []; faces2D.forEach((t) => t.forEach((p) => src.push([p[0] - x0, p[1] - y0])));
+    const snap = (p) => { let bq = null, bd = 3 * d; for (const q of src) { const dd = Math.hypot(q[0] - p[0], q[1] - p[1]); if (dd < bd) { bd = dd; bq = q; } } return bq ? [bq[0], bq[1]] : p; };
+    return u.map((poly) => poly.map((ring, k) => {
+      let r = openRing(ring); if (ringArea(r) < 0) r = r.reverse();
+      r = offsetRing(r, k === 0 ? -d : d).map(snap);           // contour extérieur rétréci de d ; trou (pris CCW) agrandi de d
+      r = r.filter((p, i) => { const q = r[(i + 1) % r.length]; return Math.hypot(q[0] - p[0], q[1] - p[1]) > 1e-6; });
+      return r.map((p) => [p[0] + x0, p[1] + y0]);
+    })).filter((poly) => poly[0].length >= 3 && Math.abs(ringArea(poly[0])) > 0.05);
+  }
+
   // ---------------------------------------------------------------- bâtiments
   /* layers : { Building_solid: GeoJSON, Wall: GeoJSON, Roof: GeoJSON } */
   function buildBuildings(layers) {
@@ -609,9 +645,13 @@ body.noscroll{overflow:hidden}
     const zTop = Math.max(...b.faces.map((t) => Math.max(...t.map((p) => p[2])))), bot = bottomFaces(b);
     const low = b.faces.filter((t, i) => bot.has(i) && Math.max(...t.map((p) => p[2])) < zb + 0.5 * (zTop - zb));
     const floorA = floor.reduce((s, t) => s + Math.abs(newell(t)[2]) / 2, 0), lowA = low.reduce((s, t) => s + Math.abs(newell(t)[2]) / 2, 0);
-    const src = floor.length && lowA <= floorA * 1.03 ? floor : low.length ? low : floor;
+    // petits morceaux de base un peu plus haut (avant-corps, marche de 0.4 m) : gardés même s'ils font moins de 3 % de l'emprise,
+    // sinon leurs murs tombent hors du contour et la 3D a un trou au pied
+    const near = low.filter((t) => Math.max(...t.map((p) => p[2])) < zb + 1.5);
+    const src = floor.length && lowA <= floorA * 1.03 ? (near.length > floor.length ? near : floor) : low.length ? low : floor;
     if (src.length) {
-      const u = PC.union(...src.map((t) => [[...t.map((p) => [p[0], p[1]]), [t[0][0], t[0][1]]]]));
+      let u = unionClosed(src.map((t) => t.map((p) => [p[0], p[1]]))).map((poly) => poly.map((r) => [...r, r[0]]));
+      if (!u.length) u = PC.union(...src.map((t) => [[...t.map((p) => [p[0], p[1]]), [t[0][0], t[0][1]]]]));
       let best = null, bestA = 0;
       for (const poly of u) { const A = Math.abs(ringArea(openRing(poly[0]))); if (A > bestA) { bestA = A; best = poly; } }
       // après une séparation : la partie qui contient le point de l'adresse, pas forcément la plus grande
@@ -623,6 +663,10 @@ body.noscroll{overflow:hidden}
         b.footprint = ring;
         b.fpArea = Math.abs(ringArea(ring));
         b.perimeter = ring.reduce((s, p, i) => s + Math.hypot(ring[(i + 1) % ring.length][0] - p[0], ring[(i + 1) % ring.length][1] - p[1]), 0);
+        // autres morceaux de la base, accolés au corps principal (petite annexe, avant-corps posé plus haut) : leurs murs sont repris
+        // comme murs en retrait, il faut aussi leur sol pour fermer l'enveloppe
+        b.fpOther = b.__keep ? [] : u.filter((poly) => poly !== best).map((poly) => poly.map((r) => openRing(r)))
+          .filter((poly) => Math.abs(ringArea(poly[0])) > 0.5 && ringDistance(poly[0], ring) < 1);
       }
     }
   }
@@ -797,18 +841,63 @@ body.noscroll{overflow:hidden}
       const q = t.map((p) => [(p[0] - fcx) * ny - (p[1] - fcy) * nx, p[2]]), c = [q.reduce((s, v) => s + v[0], 0) / q.length, q.reduce((s, v) => s + v[1], 0) / q.length];
       return VF.some((o) => { if (!o || o.t === t || o.nx * nx + o.ny * ny > -0.98 || Math.abs(o.d + d) > 0.05) return false;
         try { return mpArea(PC.intersection([[...q, q[0]]], [[...o.q.map((v) => [-v[0], v[1]]), [-o.q[0][0], o.q[0][1]]]])) > 0.05; } catch (e) { return false; } }); };
+    // point dans le solide : rayon vertical vers le haut, parité des faces non verticales traversées
+    const HZ = b.faces.map((t) => { const n = newell(t), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m < 0.05) return null;
+      return { t, n, x0: Math.min(...t.map((p) => p[0])), x1: Math.max(...t.map((p) => p[0])), y0: Math.min(...t.map((p) => p[1])), y1: Math.max(...t.map((p) => p[1])) }; }).filter(Boolean);
+    const inSolid = (x, y, z) => { let c = 0; for (const h of HZ) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
+      if (h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2] > z - dz) c++; } return c % 2 === 1; };
+    // partie d'une face verticale dont le côté extérieur (normale nx, ny) est hors du solide, sur une grille de ~25 cm
+    const exposedPart = (t, nx, ny) => {
+      // coupe exacte du solide par un plan vertical à 5 cm devant la face : le long de ce plan, les intervalles de z « dans le solide »
+      // varient linéairement entre les abscisses où une arête du solide traverse le plan → trapèzes exacts (bords horizontaux,
+      // rampants et retours verticaux au bon endroit, sans escalier)
+      const tx = ny, ty = -nx, O = t[0], off = 0.05, q = t.map((p) => [(p[0] - O[0]) * tx + (p[1] - O[1]) * ty, p[2]]);
+      const s0 = Math.min(...q.map((v) => v[0])), s1 = Math.max(...q.map((v) => v[0]));
+      const dOf = (p) => (p[0] - O[0]) * nx + (p[1] - O[1]) * ny - off, sOf = (p) => (p[0] - O[0]) * tx + (p[1] - O[1]) * ty;
+      const brk = [s0, s1];
+      HZ.forEach((h) => { const r = h.t; for (let k = 0; k < r.length; k++) { const a = r[k], c = r[(k + 1) % r.length], da = dOf(a), dc = dOf(c);
+        if (Math.abs(da) < 1e-9) { const s = sOf(a); if (s > s0 && s < s1) brk.push(s); continue; }
+        if (da * dc < 0) { const u = da / (da - dc), s = sOf([a[0] + u * (c[0] - a[0]), a[1] + u * (c[1] - a[1])]); if (s > s0 && s < s1) brk.push(s); } } });
+      brk.sort((a, c) => a - c);
+      const zAt = (s) => { const x = O[0] + tx * s + nx * off, y = O[1] + ty * s + ny * off, zs = [];
+        for (const h of HZ) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
+          zs.push(h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2] + dz); }
+        return zs.sort((a, c) => a - c); };
+      const cov = [];
+      for (let k = 0; k < brk.length - 1; k++) { const sa = brk[k], sb = brk[k + 1], w = sb - sa; if (w < 1e-4) continue;
+        const e = Math.min(1e-3, w / 4), A = zAt(sa + e), B = zAt(sb - e), g = (w - 2 * e) || 1;
+        if (A.length === B.length && A.length % 2 === 0) { for (let i = 0; i < A.length; i += 2) {   // extrapolation linéaire aux bornes
+            const za0 = A[i] - (B[i] - A[i]) / g * e, za1 = A[i + 1] - (B[i + 1] - A[i + 1]) / g * e;
+            const zb0 = B[i] + (B[i] - A[i]) / g * e, zb1 = B[i + 1] + (B[i + 1] - A[i + 1]) / g * e;
+            if (Math.max(za1 - za0, zb1 - zb0) > 1e-3) cov.push([[[sa, za0], [sb, zb0], [sb, zb1], [sa, za1], [sa, za0]]]); } }
+        else { const M = zAt((sa + sb) / 2); for (let i = 0; i + 1 < M.length; i += 2) cov.push([[[sa, M[i]], [sb, M[i]], [sb, M[i + 1]], [sa, M[i + 1]], [sa, M[i]]]]); } }
+      if (!cov.length) return [t];                             // rien contre la face (cas courant)
+      let res; try { res = PC.difference([[...q, q[0]]], ...cov); } catch (err) { return [t]; }
+      const Af = Math.abs(ringArea(q)), Ar = mpArea(res); if (Ar > Af - 0.02) return [t];
+      const out = []; res.forEach((pg) => { const r = openRing(pg[0]); if (Math.abs(ringArea(r)) > 0.05) out.push(r.map(([s, z]) => [O[0] + tx * s, O[1] + ty * s, z])); });
+      return out;
+    };
     for (const t of wallFaces) {
       const cx = t.reduce((s, p) => s + p[0], 0) / t.length, cy = t.reduce((s, p) => s + p[1], 0) / t.length;
       let best = -1, bd = Infinity;
       edges.forEach((e, i) => { const d = segDist(cx, cy, e.p1[0], e.p1[1], e.p2[0], e.p2[1]); if (d < bd) { bd = d; best = i; } });
-      if (bd > 0.3) {
-        // face verticale hors du contour de base : mur en retrait (attique, corniche), mur du corps principal au-dessus d'une annexe,
-        // ou mur dans la toiture (lanterneau, lucarne). Élément propre, triangles d'un même plan fusionnés, dessiné à sa place réelle.
-        const nh = newell(t), m = Math.hypot(nh[0], nh[1]), A = norm(nh) / 2, z0f = Math.min(...t.map((p) => p[2]));
-        if (A > 0.05 && z0f > zGroundMax + 0.1 && m > 1e-9 && Math.abs(nh[2]) / Math.hypot(m, nh[2]) < 0.1 && !isInternal(t, nh, m)) {
-          let nx = nh[0] / m, ny = nh[1] / m; if (nx * (cx - fcx) + ny * (cy - fcy) < 0) { nx = -nx; ny = -ny; }   // normale vers l'extérieur
+      const nh0 = newell(t), m0 = Math.hypot(nh0[0], nh0[1]);
+      const par = best >= 0 && m0 > 1e-9 && Math.abs((nh0[0] * edges[best].n[0] + nh0[1] * edges[best].n[1]) / m0) > 0.9;   // face parallèle à la façade
+      if (bd > 0.3 || !par) {
+        // face verticale hors du contour de base : mur en retrait (attique, entrée, loggia, étage plus étroit), mur du corps principal
+        // au-dessus d'une annexe, ou mur dans la toiture (lanterneau, lucarne). Élément propre, triangles d'un même plan fusionnés,
+        // dessiné à sa place réelle. (Avant : ignorée si elle partait du niveau du terrain → trou dans la façade 3D.)
+        const nh = nh0, m = m0, A = norm(nh) / 2, z0f = Math.min(...t.map((p) => p[2]));
+        if (A > 0.05 && m > 1e-9 && Math.abs(nh[2]) / Math.hypot(m, nh[2]) < 0.1 && !isInternal(t, nh, m)) {
+          let nx = nh[0] / m, ny = nh[1] / m;
+          // normale vers l'extérieur : on teste de quel côté de la face on est dans le solide (cour intérieure, retour d'un retrait :
+          // l'extérieur n'est pas forcément à l'opposé du centre du bâtiment)
+          const zc = t.reduce((s, p) => s + p[2], 0) / t.length, side = (k) => inSolid(cx + nx * k, cy + ny * k, zc);
+          const sP = side(0.15), sN = side(-0.15);
+          if (sP && !sN) { nx = -nx; ny = -ny; } else if (sP === sN && nx * (cx - fcx) + ny * (cy - fcy) < 0) { nx = -nx; ny = -ny; }
           const onCut = (b.splitLines || []).some((L) => t.every((p) => Math.abs((p[0] - L.a[0]) * L.n[0] + (p[1] - L.a[1]) * L.n[1]) < 0.05));
-          roofWalls.push({ face: t, area: A, az: azimuth(nx, ny), roof: !onCut && z0f > zSlope - 0.1, split: onCut });
+          // partie exposée seulement : un volume accolé (socle, aile) peut couvrir le bas du mur → cette partie est intérieure
+          exposedPart(t, nx, ny).forEach((r) => roofWalls.push({ face: r, area: norm(newell(r)) / 2, az: azimuth(nx, ny), roof: !onCut && z0f > zSlope - 0.1, split: onCut }));
         }
         continue;
       }
@@ -837,7 +926,16 @@ body.noscroll{overflow:hidden}
       let U; try { U = PC.union(...rings); } catch (err) { U = rings; }
       U.forEach((poly) => { const A = mpArea([poly]); if (A > 0.05) merged.push({ poly: [poly], area: A, az: pl.az, roof: pl.roof, split: pl.split, o: [fcx + pl.nx * pl.d, fcy + pl.ny * pl.d], t: [pl.tx, pl.ty] }); });
     });
-    roofWalls.length = 0; roofWalls.push(...merged);
+    // les murs en retrait qui partent du terrain : coupés au bas de l'enveloppe (le solide swisstopo descend sous le terrain)
+    const zF0 = typeof opts.zRadier === 'number' && isFinite(opts.zRadier) ? (typeof opts.z00 === 'number' && isFinite(opts.z00) ? opts.z00 : tRef) + opts.zRadier
+      : Math.min(...edges.flatMap((e) => e.terrain.map((q) => q[1])));
+    roofWalls.length = 0;
+    merged.forEach((w) => {
+      const zmin = Math.min(...w.poly[0][0].map((q) => q[1]));
+      if (zmin < zF0 - 0.01) { let c; try { c = PC.intersection(w.poly, [[[-1e5, zF0], [1e5, zF0], [1e5, 1e5], [-1e5, 1e5], [-1e5, zF0]]]); } catch (err) { c = w.poly; }
+        c.forEach((pg) => { const A = mpArea([pg]); if (A > 0.05) roofWalls.push(Object.assign({}, w, { poly: [pg], area: A, low: true })); }); }
+      else roofWalls.push(w);
+    });
     roofWalls.forEach((w) => { w.orientation = sector(w.az); });
     // base de l'enveloppe chauffée : niveau relatif au terrain moyen (ex. plancher du rez au-dessus d'un sous-sol non chauffé)
     const tMean0 = tRef;   // terrain moyen swissALTI3D (indépendant de la ligne de terre)
@@ -914,7 +1012,22 @@ body.noscroll{overflow:hidden}
     const Vhs = V - b.fpArea * (tMean - dz - b.zbottom);
     const rect = minRect(b.footprint);
 
-    return { edges, roofWalls, pans, roofDebord, dz, zref, terrainSrc: terrainSrc + (groundLine ? ' — ligne de terre droite entre les angles' : ''), zCut: isFinite(zCut) ? zCut : null,
+    // planchers sur l'extérieur : dessous du solide au-dessus de la base (étage en porte-à-faux, passage couvert, plafond de loggia).
+    // Un débord de toit a aussi un dessous, mais il est mince : on exige au moins 1.8 m de bâtiment au-dessus.
+    const overhangs = [];
+    { const bot = bottomFaces(b), lv = [];
+      b.faces.forEach((t, i) => { if (!bot.has(i)) return; const n = newell(t), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m < 0.97) return;
+        const z = t.reduce((s, p) => s + p[2], 0) / t.length + dz; if (z < zF0 + 0.3) return;
+        const x = t.reduce((s, p) => s + p[0], 0) / t.length, y = t.reduce((s, p) => s + p[1], 0) / t.length;
+        let zUp = Infinity; for (const h of HZ) { if (h.t === t || x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue;
+          const zz = h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2] + dz; if (zz > z + 0.05) zUp = Math.min(zUp, zz); }
+        if (!(zUp - z > 1.8)) return;
+        let L = lv.find((g) => Math.abs(g.z - z) < 0.3); if (!L) { L = { z, faces: [], A: 0 }; lv.push(L); }
+        L.faces.push(t.map((p) => [p[0], p[1]])); L.A += Math.abs(n[2]) / 2; L.zs = (L.zs || 0) + z * Math.abs(n[2]) / 2; });
+      lv.forEach((L) => { const z = L.zs / L.A; unionClosed(L.faces).forEach((poly) => { const r = poly[0], A = Math.abs(ringArea(r)) - poly.slice(1).reduce((s, h) => s + Math.abs(ringArea(h)), 0);
+        if (A > 0.5) overhangs.push({ z, poly, area: A }); }); }); }
+    const baseParts = (b.fpOther || []).map((poly) => ({ poly, area: Math.abs(ringArea(poly[0])) - poly.slice(1).reduce((s, h) => s + Math.abs(ringArea(h)), 0) }));
+    return { edges, roofWalls, pans, roofDebord, dz, zref, overhangs, baseParts, terrainSrc: terrainSrc + (groundLine ? ' — ligne de terre droite entre les angles' : ''), zCut: isFinite(zCut) ? zCut : null,
       tRef, corners, cornersAuto, groundLine, zFloorAuto: Math.min(...edges.flatMap((e) => e.terrain.map((q) => q[1]))),
       baseRef: typeof opts.z00 === 'number' && isFinite(opts.z00) ? 'plan' : 'terrain', zRefB: typeof opts.z00 === 'number' && isFinite(opts.z00) ? opts.z00 : tRef,
       zFloor: typeof opts.zRadier === 'number' && isFinite(opts.zRadier) ? (typeof opts.z00 === 'number' && isFinite(opts.z00) ? opts.z00 : tRef) + opts.zRadier : Math.min(...edges.flatMap((e) => e.terrain.map((q) => q[1]))), tMin: Math.min(...allT), tMax: Math.max(...allT), tMean,
@@ -1177,9 +1290,11 @@ body.noscroll{overflow:hidden}
       });
     });
     (res.roofWalls || []).forEach((w, k) => {
-      const key = `L|${k}`, def = w.split ? 'Contre chauffé' : combNC ? OUT : 'Mur extérieur';
+      // combles non chauffés : seuls les murs dans la toiture (lucarnes) sont hors enveloppe, pas les murs en retrait des étages
+      const key = `L|${k}`, def = w.split ? 'Contre chauffé' : combNC && w.roof ? OUT : 'Mur extérieur';
       P.push({ key, kind: 'mur', edge: -1, band: w.roof ? 'toiture' : 'ressaut', ter: 'hs', orientation: w.orientation, plane: w, area: w.area, def, type: adj[key] || def, zone: null,
-        label: w.split ? `Mur ${w.orientation} sur la limite de séparation (mitoyen)` : w.roof ? `Mur dans la toiture ${w.orientation} (lanterneau / lucarne)` : `Mur ${w.orientation} en retrait / au-dessus d'une partie basse` });
+        label: w.split ? `Mur ${w.orientation} sur la limite de séparation (mitoyen)` : w.roof ? `Mur dans la toiture ${w.orientation} (lanterneau / lucarne)`
+          : w.low ? `Mur ${w.orientation} en retrait depuis le terrain (entrée, loggia, cour, étage décalé)` : `Mur ${w.orientation} en retrait / au-dessus d'une partie basse` });
     });
     res.pans.forEach((p, i) => {
       const flat = p.az == null || p.tilt <= 3, key = `T|${i}`, def = combNC && !flat ? OUT : flat ? 'Toit plat / terrasse' : 'Toit en pente', o = flat ? 'Horiz' : sector(p.az);
@@ -1190,7 +1305,14 @@ body.noscroll{overflow:hidden}
     { const dF = res.tRef != null && res.zFloor != null ? res.tRef - res.zFloor : 0;      // profondeur du sol sous le terrain moyen
       const key = 'S|0', def = ss === 'non chauffé' ? 'Contre non-chauffé (Ssol sous terre) (non isolé et/ou non étanche à l\'air)' : dF > 2 ? 'Contre terrain > 2 m' : 'Contre terrain ≤ 2 m';
       const zb = zCut != null ? zCut : res.zFloor != null ? res.zFloor : Math.min(...res.edges.map((e) => isFinite(e.zbot) ? e.zbot : Infinity));
-      P.push({ key, kind: 'sol', orientation: 'Horiz', area: res.footprintArea, z: zb, def, type: adj[key] || def, label: zCut != null ? 'Plancher sur sous-sol (empreinte, base de l\'enveloppe)' : `Dalle inférieure / radier (empreinte, ${fmt(dF)} m sous le terrain moyen)` }); }
+      P.push({ key, kind: 'sol', orientation: 'Horiz', area: res.footprintArea, z: zb, def, type: adj[key] || def, label: zCut != null ? 'Plancher sur sous-sol (empreinte, base de l\'enveloppe)' : `Dalle inférieure / radier (empreinte, ${fmt(dF)} m sous le terrain moyen)` });
+      (res.baseParts || []).forEach((bp, k) => { const kk = `S|b${k}`;
+        P.push({ key: kk, kind: 'sol', orientation: 'Horiz', area: bp.area, z: zb, poly2d: bp.poly, def, type: adj[kk] || def, label: `Sol d'une partie accolée (annexe, avant-corps), ${fmt(bp.area)} m²` }); }); }
+    (res.overhangs || []).forEach((o, k) => {
+      const key = `S|o${k}`, def = 'Contre extérieur';
+      P.push({ key, kind: 'sol', orientation: 'Horiz', area: o.area, z: o.z, poly2d: o.poly, def, type: adj[key] || def,
+        label: `Plancher sur l'extérieur (porte-à-faux, passage couvert, loggia), ${fmt(o.z - (res.tRef != null ? res.tRef : 0))} m sur le terrain moyen` });
+    });
     return P;
   }
   /* Lignes CECB : morceaux regroupés par (genre, type, orientation). open = { pieceKey: surface d'ouvertures } */
@@ -3777,6 +3899,7 @@ function drawDecomp(g, DC, P, b, res, ink){
       if(rest.length) tris.push(...tri2(rest, at(() => 0)));
       add(tris, p); }
     else if(p.kind === 'plafond' && p.type === C.OUT && !sel.has(p.key)) return;   // plancher des combles hors enveloppe : masqué (bouton « Plancher des combles » pour le choisir)
+    else if(p.kind === 'sol' && p.poly2d){ add(tri2([p.poly2d.map((r) => [...r, r[0]])], (x, y) => P([x, y, p.z], 0)), p); }   // plancher sur l'extérieur
     else if(p.kind === 'plafond' || p.kind === 'sol'){ const fpr = [[[...b.footprint, b.footprint[0]]]]; add(tri2(fpr, (x, y) => P([x, y, p.z], 0)), p); }
   });
   // pans de toit : faces du solide rattachées au pan le plus proche (azimut / pente)
@@ -3796,7 +3919,7 @@ function renderDecomp(){
   const DC = T3 && T3.dc; if(!DC) return;
   const ps = selInfo(), box = $('d3-edit');
   if(!ps.length){ box.innerHTML = `<div class="note">Cliquez un mur ou un pan de toit (Maj + clic : plusieurs).</div>
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${DC.pieces.filter((p) => p.kind === 'plafond' || p.kind === 'sol').map((p) => `<button type="button" class="ghost sm" data-pick="${p.key}">${p.kind === 'sol' ? 'Sol / dalle' : 'Plancher des combles'}</button>`).join('')}</div>`; }
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${DC.pieces.filter((p) => p.kind === 'plafond' || p.kind === 'sol').map((p) => `<button type="button" class="ghost sm" data-pick="${p.key}">${p.kind === 'sol' ? (/^S\|o/.test(p.key) ? 'Plancher sur l\'extérieur' : /^S\|b/.test(p.key) ? 'Sol partie accolée' : 'Sol / dalle') : 'Plancher des combles'}</button>`).join('')}</div>`; }
   else {
     const kind = ps[0].kind === 'plafond' ? 'toit' : ps[0].kind, same = ps.every((p) => (p.kind === 'plafond' ? 'toit' : p.kind) === kind), A = ps.reduce((s, p) => s + p.area, 0);
     const cur = ps.every((p) => p.type === ps[0].type) ? ps[0].type : '';
