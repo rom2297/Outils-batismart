@@ -2000,9 +2000,25 @@ async function openTile(file){
 async function extract(E,N,R=60){
   const G=S.gdal, out={};
   for(const L of ['Building_solid','Wall','Roof']){
-    const o = await G.ogr2ogr(S.ds, ['-f','GeoJSON','-spat',String(E-R),String(N-R),String(E+R),String(N+R),'-nlt','MULTIPOLYGON','-dim','XYZ',L], `x${++S.n}`);
+    // « -where 1=1 » : gdal3.js garde le filtre attributaire d'un appel à l'autre sur le même jeu de données (sinon la 2e passe
+    // ci-dessous filtrerait les bâtiments suivants → « aucun bâtiment »)
+    const o = await G.ogr2ogr(S.ds, ['-f','GeoJSON','-preserve_fid','-where','1=1','-spat',String(E-R),String(N-R),String(E+R),String(N+R),'-nlt','MULTIPOLYGON','-dim','XYZ',L], `x${++S.n}`);
     const bytes = await G.getFileBytes(o);
     out[L] = JSON.parse(new TextDecoder().decode(bytes));
+    // GDAL : « -nlt MULTIPOLYGON » convertit bien les TIN / multipatch, mais perd le Z des objets déjà MultiPolygon Z (certaines
+    // tuiles, p. ex. Vaud) → bâtiment sans altitude, écarté (on prenait alors le garage voisin). 2e passe en 2.5D pour ceux-là.
+    const noZ = (f) => { const g = f.geometry; if(!g || !g.coordinates || !g.coordinates.length) return true; const q = g.coordinates[0] && g.coordinates[0][0] && g.coordinates[0][0][0]; return !q || q.length < 3; };
+    if(out[L].features.some(noZ)){
+      // uniquement ces objets, par identifiant (FID) : un TIN dans la sélection ferait échouer la conversion 2.5D, et gdal3.js
+      // reste ensuite inutilisable pour la session
+      const ids = out[L].features.filter((f) => f.geometry && f.geometry.coordinates && f.geometry.coordinates.length && noZ(f)).map((f) => f.id).filter((v) => Number.isInteger(v));
+      try{ const byId = new Map();
+        for(let k = 0; k < ids.length; k += 400){
+          const o2 = await G.ogr2ogr(S.ds, ['-f','GeoJSON','-preserve_fid','-where',`OBJECTID IN (${ids.slice(k, k + 400).join(',')})`,'-nlt','MULTIPOLYGON25D',L], `x${++S.n}`);
+          JSON.parse(new TextDecoder().decode(await G.getFileBytes(o2))).features.forEach((f) => { if(!noZ(f)) byId.set(f.id, f.geometry); }); }
+        out[L].features.forEach((f) => { if(noZ(f) && byId.has(f.id)) f.geometry = byId.get(f.id); });
+      }catch(ex){ /* 2e passe facultative */ }
+    }
   }
   return out;
 }
