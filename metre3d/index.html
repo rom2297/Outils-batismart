@@ -905,9 +905,11 @@ body.noscroll{overflow:hidden}
       const mx = (arr) => Math.max(...arr.map((t) => Math.max(...t.map((p) => p[2]))));
       dz = mx(b.walls) - mx(solidV);
     }
-    const zref = b.props.GELAENDEPUNKT;
+    // point terrain du modèle ; absent sur les anciennes tuiles (Vaud 2015-2020) : bas du solide swisstopo (≈ point bas du terrain).
+    // Sans ce repli, si le profil swissALTI3D échoue, le terrain valait 0 m et les murs descendaient jusqu'au niveau de la mer.
+    const zref = Number.isFinite(b.props.GELAENDEPUNKT) ? b.props.GELAENDEPUNKT : b.zbottom + dz;
 
-    let terrainSrc = 'point de référence du modèle (GELAENDEPUNKT)';
+    let terrainSrc = Number.isFinite(b.props.GELAENDEPUNKT) ? 'point de référence du modèle (GELAENDEPUNKT)' : 'bas du modèle 3D (swissALTI3D indisponible, à vérifier)';
     let okAll = !!terrainFn;
     if (terrainFn) {
       try {
