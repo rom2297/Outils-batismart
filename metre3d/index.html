@@ -169,6 +169,16 @@ input[type=number]{width:90px;font-family:var(--mono);font-size:13px}
 .d3edit:empty{display:none}.d3edit .d3h{font-weight:600;display:flex;gap:8px;justify-content:space-between}.d3edit select{width:100%}
 button.sm{padding:4px 8px;font-size:12px}
 #d3-lines tbody tr{cursor:pointer}#d3-lines td.mono{white-space:nowrap}#d3-lines tbody tr.on td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.v3dwrap{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:10px;align-items:start}
+@media (max-width:1000px){.v3dwrap{grid-template-columns:minmax(0,1fr)}}
+#d3-legend{position:static;max-height:min(68vh,680px);min-height:0;overflow:auto;border:1px solid var(--line);background:var(--surface);align-content:flex-start}
+#d3-legend:empty{display:none}
+.legend.elems{flex-direction:column;flex-wrap:nowrap;gap:1px;padding:8px 6px 8px 8px}
+.legend.elems .lgh{font-weight:600;font-size:12px;margin:0 2px 3px}
+.legend.elems button{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:6px;align-items:center;text-align:left;background:none;border:1px solid transparent;border-radius:4px;padding:2px 4px;font:inherit;color:inherit;cursor:pointer}
+.legend.elems button:hover{border-color:var(--line)}.legend.elems button.on{border-color:var(--accent);background:var(--accent-soft)}
+.legend.elems .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legend.elems .ar{color:var(--muted)}
+.legend.elems>div{display:flex;gap:6px;align-items:center;margin-top:3px;padding:0 4px}
 .legend{position:absolute;left:10px;bottom:10px;display:flex;flex-wrap:wrap;gap:4px 12px;background:color-mix(in srgb,var(--surface) 88%,transparent);padding:6px 10px;border-radius:var(--radius);font-size:12px}
 /* compléments */
 .cgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
@@ -308,8 +318,9 @@ body.noscroll{overflow:hidden}
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · glisser : tourner · clic droit : déplacer</span>
       </div>
-      <div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
+      <div class="v3dwrap"><div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
         <div class="d3edit" id="d3-edit" aria-live="polite"></div><div class="d3tip" id="d3-tip" aria-live="polite"></div></div>
+        <aside class="legend" id="d3-legend" aria-label="Légende des couleurs"></aside></div>
       <div id="d3-side">
         <details class="cuts" id="d3-cutbox"><summary><b>Découpes des façades</b> <span class="note">— plusieurs types de façade</span></summary>
           <p class="note" style="margin:6px 0"><b>Horizontales</b> (toutes les façades, le pignon reste entier) : outil « ✂ Coupe horizontale » puis clic sur une façade, ou cote du plan (par rapport au ±0.00), en général le dessus de la dalle. Chaque partie devient un élément CECB séparé avec son propre U (onglet 5).</p>
@@ -3683,7 +3694,7 @@ function init3D(){
   ctl.maxPolarAngle = Math.PI * 0.495; ctl.enableDamping = false;
   sc.add(new THREE.HemisphereLight(0xffffff, 0x7d8a84, 0.8));
   const dl = new THREE.DirectionalLight(0xffffff, 0.55); dl.position.set(-40, 80, 30); sc.add(dl);
-  const lg = document.createElement('div'); lg.className = 'legend'; el.appendChild(lg);
+  const lg = $('d3-legend');                     // légende à côté de la vue 3D
   T3 = { r, sc, cam, ctl, lg, group: null, b: null, view: 'cecb', sel: [], render(){ r.render(sc, cam); } };
   ctl.addEventListener('change', () => T3.render());
   let down = null; r.domElement.addEventListener('pointerdown', (e) => { down = dragStart(e) ? null : [e.clientX, e.clientY]; }, true);
@@ -3797,12 +3808,14 @@ function build3D(){
   T3.cam.updateProjectionMatrix(); T3.ctl.update(); }
   T3.b = b;
   const present = [...new Set(res.edges.map((e) => e.orientation))];
-  if(DC){ const used = [...new Set(DC.pieces.map((p) => typeCat(p.type)))];
-    T3.lg.innerHTML = CAT.filter((c) => used.includes(c[0])).map((c) => `<span><span class="dot" style="background:${c[1]}"></span>${c[2]}</span>`).join('') +
-      `<span><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin}</span>`;
-    T3.lg.innerHTML += '<span><span class="dot" style="background:#2f7d3a;height:3px"></span>Ligne de terre</span>';
+  if(DC){ const sel = new Set(T3.sel || []), hasOut = DC.pieces.some((p) => p.type === C.OUT);
+    T3.lg.classList.add('elems');
+    T3.lg.innerHTML = `<div class="lgh">Éléments CECB</div>` + DC.lines.map((l, i) => `<button type="button" data-lg="${i}" class="${l.keys.some((k) => sel.has(k)) ? 'on' : ''}" title="${esc(l.code + ' ' + l.name + ' — ' + l.type + ' — net ' + fmt(l.net) + ' m²')}"><span class="dot" style="background:${l.col}"></span><span class="mono">${l.code}</span><span class="nm">${esc(l.name)}</span><span class="mono ar">${fmt(l.net)}</span></button>`).join('') +
+      (hasOut ? `<div><span class="dot" style="background:${OUT_COL}"></span>Hors enveloppe</div>` : '') +
+      `<div><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin} · <span class="dot" style="background:#2f7d3a;height:3px"></span>Ligne de terre</div>`;
+    T3.lg.querySelectorAll('[data-lg]').forEach((b) => { b.onclick = () => { T3.sel = DC.lines[+b.dataset.lg].keys.slice(); build3D(); }; });
     renderDecomp(); T3.render(); return; }
-  T3.lg.innerHTML = present.map((o) => `<span><span class="dot" style="background:${ocol(o)}"></span>${o}</span>`).join('') +
+  T3.lg.classList.remove('elems'); T3.lg.innerHTML = present.map((o) => `<span><span class="dot" style="background:${ocol(o)}"></span>${o}</span>`).join('') +
     `<span><span class="dot" style="background:#8f6a5a"></span>Toiture</span><span><span class="dot" style="background:var(--nb-line)"></span>Voisins</span>` +
     `<span><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin}${T3.nOff ? ` <span style="color:var(--muted)">(${T3.nOff} non affichée(s) : sans repère façade ou au-dessus de l'égout)</span>` : ''}</span>`;
   T3.render();
@@ -4143,6 +4156,10 @@ function typeCat(t){
 const catCol = (t) => (CAT.find((c) => c[0] === typeCat(t)) || CAT[0])[1];
 function pointIn(poly, x, y){ let ins = false; for(const ring of poly){ for(let i = 0, j = ring.length - 1; i < ring.length; j = i++){ const [xi, yi] = ring[i], [xj, yj] = ring[j];
   if(((yi > y) !== (yj > y)) && x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-12) + xi) ins = !ins; } } return ins; }
+// couleurs distinctes par élément (angle d'or sur la teinte, deux clartés alternées)
+function elemCol(i){ const h = (i * 137.508 + 20) % 360, l = i % 2 ? 46 : 62, sa = i % 3 === 2 ? 55 : 68;
+  return '#' + new THREE.Color().setHSL(h / 360, sa / 100, l / 100).getHexString(); }
+const OUT_COL = '#b9bfc3';
 function cecbData(){                          // morceaux, lignes CECB, rattachement des ouvertures
   const res = S.res; if(!res) return null;
   const pieces = C.decompose(res, S.extra), byKey = new Map(pieces.map((p) => [p.key, p]));
@@ -4163,6 +4180,7 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
     if(pc && !out && f.l > 0 && f.h > 0) open[pc.key] = (open[pc.key] || 0) + (f.nombre || 1) * f.l * f.h;
   });
   const lines = C.cecbLines(pieces, open, false), lineOf = new Map();
+  lines.forEach((l, i) => { l.col = elemCol(i); });                              // une couleur par élément CECB
   lines.forEach((l) => l.keys.forEach((k) => lineOf.set(k, l)));
   const wins = (S.extra.fenetres || []).map((f) => { const w = winOf.get(f); return { f, out: w.out, parent: w.piece && lineOf.get(w.piece.key) ? lineOf.get(w.piece.key).code : '' }; });
   return { pieces, byKey, lines, lineOf, winOf, wins, open };
@@ -4181,17 +4199,15 @@ function drawDecomp(g, DC, P, b, res, ink){
   const grp = new Map(), pickGeo = [];
   const add = (tris, p) => {                   // tris : [[x,y,z]…] par 3
     const ln = DC.lineOf.get(p.key), gk = ln ? ln.lk : 'X|' + p.key;
-    const G = grp.get(gk) || { tris: [], keys: [], type: p.type }; G.tris.push(...tris); G.keys.push(p.key); grp.set(gk, G);
+    const G = grp.get(gk) || { tris: [], keys: [], type: p.type, col: ln ? ln.col : OUT_COL }; G.tris.push(...tris); G.keys.push(p.key); grp.set(gk, G);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }));   // cible de clic invisible, par morceau
     m.userData.key = p.key; g.add(m); T3.pick.push(m);
   };
-  // façades découpées : nuances alternées par élément CECB d'un même type, pour distinguer les parties
-  const segd = !!((S.extra.cuts || []).length || (S.extra.vcuts || []).length || Object.keys(S.extra.names || {}).length), ordT = {};
   const flush = () => grp.forEach((G) => {
     const on = G.keys.some((k) => sel.has(k)), geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(G.tris.flat(), 3)); geo.computeVertexNormals();
-    const c = new THREE.Color(catCol(G.type)); if(segd){ const k = ordT[G.type] = (ordT[G.type] || 0) + 1; c.offsetHSL(0, 0, [0, -0.09, 0.07, -0.04][(k - 1) % 4]); } if(on) c.lerp(acc, 0.45);
+    const c = new THREE.Color(G.col); if(on) c.lerp(acc, 0.45);
     g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
     // arêtes : seulement les vrais angles (> 20°) et le contour, pas les jonctions entre morceaux coplanaires
     const mg = THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeVertices ? THREE.BufferGeometryUtils.mergeVertices(geo, 1e-3) : geo;
@@ -4257,7 +4273,7 @@ function renderDecomp(){
   // tableau des lignes CECB
   const tb = $('d3-lines').tBodies[0], tot = { g: 0, o: 0, n: 0 };
   tb.innerHTML = DC.lines.map((l, i) => { tot.g += l.gross; tot.o += l.open; tot.n += l.net; const on = l.keys.some((k) => (T3.sel || []).includes(k));
-    return `<tr data-l="${i}" class="${on ? 'on' : ''}"><td class="mono">${l.code}</td><td>${esc(l.name)}</td><td><span class="dot" style="background:${catCol(l.type)}"></span> ${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.gross)}</td><td class="n">${l.open ? fmt(l.open) : '—'}</td><td class="n"><b>${fmt(l.net)}</b></td></tr>`; }).join('');
+    return `<tr data-l="${i}" class="${on ? 'on' : ''}"><td class="mono" style="white-space:nowrap"><span class="dot" style="background:${l.col}"></span> ${l.code}</td><td>${esc(l.name)}</td><td> ${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.gross)}</td><td class="n">${l.open ? fmt(l.open) : '—'}</td><td class="n"><b>${fmt(l.net)}</b></td></tr>`; }).join('');
   $('d3-tot').innerHTML = `<td colspan="4">Enveloppe thermique (${DC.lines.length} éléments${DC.pieces.some((p) => p.type === C.OUT) ? ', hors enveloppe exclus' : ''})</td><td class="n">${fmt(tot.g)}</td><td class="n">${fmt(tot.o)}</td><td class="n"><b>${fmt(tot.n)}</b></td>`;
   const nw = DC.wins.filter((w) => !w.out).length, no = DC.wins.length - nw;
   $('d3-wins').textContent = DC.wins.length ? `${nw} ouverture(s) rattachée(s) à leur élément parent${no ? `, ${no} hors enveloppe` : ''} — surfaces déduites dans la colonne « Ouvertures ».` : 'Aucune ouverture saisie (onglet Plans ou Compléments).';
