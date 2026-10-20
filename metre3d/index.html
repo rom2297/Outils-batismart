@@ -175,7 +175,7 @@ button.sm{padding:4px 8px;font-size:12px}
 #d3-legend:empty{display:none}
 .legend.elems{flex-direction:column;flex-wrap:nowrap;gap:1px;padding:8px 6px 8px 8px}
 .legend.elems .lgh{font-weight:600;font-size:12px;margin:0 2px 3px}
-.legend.elems button{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:6px;align-items:center;text-align:left;background:none;border:1px solid transparent;border-radius:4px;padding:2px 4px;font:inherit;color:inherit;cursor:pointer}
+.legend.elems button{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px;align-items:center;text-align:left;background:none;border:1px solid transparent;border-radius:4px;padding:2px 4px;font:inherit;color:inherit;cursor:pointer}
 .legend.elems button:hover{border-color:var(--line)}.legend.elems button.on{border-color:var(--accent);background:var(--accent-soft)}
 .legend.elems .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legend.elems .ar{color:var(--muted)}
 .legend.elems>div{display:flex;gap:6px;align-items:center;margin-top:3px;padding:0 4px}
@@ -3810,10 +3810,11 @@ function build3D(){
   const present = [...new Set(res.edges.map((e) => e.orientation))];
   if(DC){ const sel = new Set(T3.sel || []), hasOut = DC.pieces.some((p) => p.type === C.OUT);
     T3.lg.classList.add('elems');
-    T3.lg.innerHTML = `<div class="lgh">Éléments CECB</div>` + DC.lines.map((l, i) => `<button type="button" data-lg="${i}" class="${l.keys.some((k) => sel.has(k)) ? 'on' : ''}" title="${esc(l.code + ' ' + l.name + ' — ' + l.type + ' — net ' + fmt(l.net) + ' m²')}"><span class="dot" style="background:${l.col}"></span><span class="mono">${l.code}</span><span class="nm">${esc(l.name)}</span><span class="mono ar">${fmt(l.net)}</span></button>`).join('') +
+    T3.lg.innerHTML = `<div class="lgh">Éléments CECB</div>` + DC.groups.map((G, i) => { const net = G.lines.reduce((a, l) => a + l.net, 0), oris = G.lines.map((l) => l.orientation).filter((o) => o !== 'Horiz'), on = G.lines.some((l) => l.keys.some((k) => sel.has(k)));
+      return `<button type="button" data-lg="${i}" class="${on ? 'on' : ''}" title="${esc(G.base + ' — ' + G.type + ' — ' + G.lines.map((l) => l.code + (l.orientation !== 'Horiz' ? ' ' + l.orientation : '') + ' ' + fmt(l.net) + ' m²').join(', '))}"><span class="dot" style="background:${G.col}"></span><span class="nm">${esc(G.base)}${oris.length ? `<span class="note"> · ${esc(oris.map(oriAb).join(', '))}</span>` : ''}</span><span class="mono ar">${fmt(net)}</span></button>`; }).join('') +
       (hasOut ? `<div><span class="dot" style="background:${OUT_COL}"></span>Hors enveloppe</div>` : '') +
       `<div><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin} · <span class="dot" style="background:#2f7d3a;height:3px"></span>Ligne de terre</div>`;
-    T3.lg.querySelectorAll('[data-lg]').forEach((b) => { b.onclick = () => { T3.sel = DC.lines[+b.dataset.lg].keys.slice(); build3D(); }; });
+    T3.lg.querySelectorAll('[data-lg]').forEach((b) => { b.onclick = () => { T3.sel = DC.groups[+b.dataset.lg].lines.flatMap((l) => l.keys); build3D(); }; });
     renderDecomp(); T3.render(); return; }
   T3.lg.classList.remove('elems'); T3.lg.innerHTML = present.map((o) => `<span><span class="dot" style="background:${ocol(o)}"></span>${o}</span>`).join('') +
     `<span><span class="dot" style="background:#8f6a5a"></span>Toiture</span><span><span class="dot" style="background:var(--nb-line)"></span>Voisins</span>` +
@@ -4160,6 +4161,7 @@ function pointIn(poly, x, y){ let ins = false; for(const ring of poly){ for(let 
 function elemCol(i){ const h = (i * 137.508 + 20) % 360, l = i % 2 ? 46 : 62, sa = i % 3 === 2 ? 55 : 68;
   return '#' + new THREE.Color().setHSL(h / 360, sa / 100, l / 100).getHexString(); }
 const OUT_COL = '#b9bfc3';
+const oriAb = (o) => ({ 'Nord': 'N', 'Nord-Est': 'NE', 'Est': 'E', 'Sud-Est': 'SE', 'Sud': 'S', 'Sud-Ouest': 'SO', 'Ouest': 'O', 'Nord-Ouest': 'NO' }[o] || o);
 function cecbData(){                          // morceaux, lignes CECB, rattachement des ouvertures
   const res = S.res; if(!res) return null;
   const pieces = C.decompose(res, S.extra), byKey = new Map(pieces.map((p) => [p.key, p]));
@@ -4180,10 +4182,14 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
     if(pc && !out && f.l > 0 && f.h > 0) open[pc.key] = (open[pc.key] || 0) + (f.nombre || 1) * f.l * f.h;
   });
   const lines = C.cecbLines(pieces, open, false), lineOf = new Map();
-  lines.forEach((l, i) => { l.col = elemCol(i); });                              // une couleur par élément CECB
+  // une couleur par élément (même nom et même type) : les orientations d'un même mur partagent la couleur
+  const groups = [];
+  lines.forEach((l) => { const base = l.name.replace(new RegExp(' - ' + l.orientation.replace(/[-]/g, '\\-') + '$'), ''), gk = `${l.kind === 'plafond' ? 'toit' : l.kind}|${l.type}|${base}`;
+    let G = groups.find((x) => x.gk === gk); if(!G){ G = { gk, base, type: l.type, col: elemCol(groups.length), lines: [] }; groups.push(G); }
+    G.lines.push(l); l.col = G.col; });
   lines.forEach((l) => l.keys.forEach((k) => lineOf.set(k, l)));
   const wins = (S.extra.fenetres || []).map((f) => { const w = winOf.get(f); return { f, out: w.out, parent: w.piece && lineOf.get(w.piece.key) ? lineOf.get(w.piece.key).code : '' }; });
-  return { pieces, byKey, lines, lineOf, winOf, wins, open };
+  return { pieces, byKey, lines, groups, lineOf, winOf, wins, open };
 }
 window.cecbData = cecbData;
 // faces d'une façade hors de son plan (murs en retrait), regroupées par plan (même décalage) et fusionnées : pas de triangles
