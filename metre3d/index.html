@@ -324,6 +324,7 @@ body.noscroll{overflow:hidden}
       <div id="d3-side">
         <details class="cuts" id="d3-cutbox"><summary><b>Découpes des façades</b> <span class="note">— plusieurs types de façade</span></summary>
           <p class="note" style="margin:6px 0"><b>Horizontales</b> (toutes les façades, le pignon reste entier) : outil « ✂ Coupe horizontale » puis clic sur une façade, ou cote du plan (par rapport au ±0.00), en général le dessus de la dalle. Chaque partie devient un élément CECB séparé avec son propre U (onglet 5).</p>
+          <p class="note" id="d3-zero" style="margin:0 0 6px"></p>
           <div class="tablewrap"><table class="edit" id="d3-cuts"><thead><tr><th>Partie</th><th class="n">Dès la cote m</th><th></th></tr></thead><tbody></tbody></table></div>
           <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="d3-cut-add">+ Niveau de découpe</button></div>
           <p class="note" style="margin:12px 0 6px"><b>Verticales</b> (une seule façade, sur toute la hauteur sauf le pignon) : outil « ✂ Coupe verticale » puis clic sur la façade. Les parties prennent le nom saisi ; sans nom, elles restent regroupées.</p>
@@ -3699,6 +3700,7 @@ function init3D(){
   ctl.addEventListener('change', () => T3.render());
   let down = null; r.domElement.addEventListener('pointerdown', (e) => { down = dragStart(e) ? null : [e.clientX, e.clientY]; }, true);
   r.domElement.addEventListener('pointermove', (e) => dragMove(e));
+  r.domElement.addEventListener('dblclick', (e) => cutDbl(e));
   r.domElement.addEventListener('pointerup', (e) => { if(dragEnd()){ down = null; return; } if(down && e.button === 0 && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) pick3D(e); down = null; });
   if(window.ResizeObserver) new ResizeObserver(() => resize3D()).observe(el);
 }
@@ -4286,6 +4288,7 @@ function renderDecomp(){
 }
 function renderCuts(){
   const cuts = S.extra.cuts || [], tb = $('d3-cuts').tBodies[0];
+  if(S.res) $('d3-zero').innerHTML = `Cotes par rapport au <b>${esc(zeroTxt())}</b>. Saisie directe ici, ou double-clic sur une ligne rouge dans la 3D.`;
   if(cuts.length) $('d3-cutbox').open = true;
   tb.innerHTML = `<tr><td><input data-base value="${esc(S.extra.cutBase || '')}" placeholder="partie basse"></td><td class="n mono">${cuts.length ? 'base' : '—'}</td><td></td></tr>` +
     cuts.map((x, i) => `<tr data-c="${i}"><td><input data-n value="${esc(x.name || '')}" placeholder="niveau ${i + 2}"></td><td class="n"><input data-z type="number" step="0.01" value="${isFinite(x.z) ? x.z : ''}" style="width:80px"></td><td><button type="button" class="ghost sm" data-del="${i}" aria-label="Supprimer">✕</button></td></tr>`).join('');
@@ -4337,6 +4340,16 @@ function setCutMode(m){
 $('d3-hcut').onclick = () => setCutMode('h'); $('d3-vcut').onclick = () => setCutMode('v');
 document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && T3 && T3.cutMode && !$('t-3d').hidden) setCutMode(T3.cutMode); });
 const hint3 = (t) => { $('d3-tip').textContent = t; };
+const zeroTxt = () => S.res && S.res.baseRef === 'plan' ? `±0.00 du plan (${fmt(S.res.zRefB)} m)` : `point 0 = terrain moyen (${fmt(S.res.zRefB != null ? S.res.zRefB : S.res.tRef)} m)`;
+// double-clic sur une ligne rouge : saisir la cote (horizontale) ou la distance depuis l'angle gauche (verticale)
+function cutDbl(ev){ const sg = segNear(ev); if(!sg) return;
+  if(sg.t === 'h'){ const c = S.extra.cuts[sg.ci], v = prompt(`Cote de la coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » en m, par rapport au ${zeroTxt()} :`, c.z.toFixed(2)); if(v == null) return;
+    const z = parseFloat(String(v).replace(',', '.')); if(!isFinite(z)) return; const cs = S.extra.cuts, lo = sg.ci > 0 ? cs[sg.ci - 1].z + 0.05 : -Infinity, hi = sg.ci < cs.length - 1 ? cs[sg.ci + 1].z - 0.05 : Infinity;
+    if(z <= lo || z >= hi){ hint3('Cette cote dépasse une coupe voisine : supprimez-la ou modifiez les deux.'); return; }
+    c.z = Math.round(z * 100) / 100; T3.sel = []; complementsChanged(); }
+  else { const v = prompt(`Coupe verticale ${sg.f.e.orientation} : distance depuis l'angle gauche (vue de l'extérieur), en m :`, sg.f.sLeft.toFixed(2)); if(v == null) return;
+    const x = parseFloat(String(v).replace(',', '.')); if(!isFinite(x)) return; moveVCut(sg.vi, sg.f, sg.f.incR ? x : sg.f.e.L - x); }
+}
 function addHCut(zRel, name){            // zRel : cote par rapport à la base de l'enveloppe (±0.00)
   const cs = S.extra.cuts = S.extra.cuts || [], n = cs.length;
   if(cs.some((x) => Math.abs(x.z - zRel) < 0.05)) return false;
@@ -4352,8 +4365,10 @@ function cutAt(hit, p){
   if(T3.cutMode === 'h'){
     if(p.kind !== 'mur'){ hint3('Coupe horizontale : cliquez sur un mur (pas la toiture).'); return; }
     if(p.edge >= 0 && Z > C.gableBase(res.edges[p.edge]) - 0.05){ hint3('Le pignon reste d\'un seul morceau : cliquez sous la base du pignon.'); return; }
-    const zr = res.zRefB != null ? res.zRefB : res.tRef, zRel = Math.round((Z - zr) * 100) / 100, cs = S.extra.cuts || [];
-    const name = prompt(`Coupe à la cote ${zRel >= 0 ? '+' : ''}${zRel.toFixed(2)} m (toutes les façades).\nNom de la partie AU-DESSUS (p. ex. « étage bois ») :`, `niveau ${cs.length + 2}`); if(name == null) return;
+    const zr = res.zRefB != null ? res.zRefB : res.tRef, cs = S.extra.cuts || [];
+    const zs = prompt(`Cote de la coupe en m, par rapport au ${zeroTxt()} (toutes les façades) — valeur cliquée, à corriger si besoin :`, (Math.round((Z - zr) * 100) / 100).toFixed(2)); if(zs == null) return;
+    const zRel = Math.round(parseFloat(String(zs).replace(',', '.')) * 100) / 100; if(!isFinite(zRel)){ hint3('Cote non valable.'); return; }
+    const name = prompt(`Coupe à la cote ${zRel >= 0 ? '+' : ''}${zRel.toFixed(2)} m.\nNom de la partie AU-DESSUS (p. ex. « étage bois ») :`, `niveau ${cs.length + 2}`); if(name == null) return;
     if(!cs.length && !S.extra.cutBase){ const b0 = prompt('Nom de la partie EN DESSOUS (p. ex. « rez maçonnerie ») :', 'partie basse'); if(b0 == null) return; S.extra.cutBase = b0.trim(); }
     if(!addHCut(zRel, name.trim())){ hint3('Une coupe existe déjà à cette hauteur.'); return; }
     T3.sel = []; complementsChanged(); return;
@@ -4438,7 +4453,10 @@ function dragStart(ev){
 }
 function dragMove(ev){
   const d = T3 && T3.drag;
-  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : 'ew-resize') : T3.cutMode ? 'crosshair' : ''; } return; }
+  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : 'ew-resize') : T3.cutMode ? 'crosshair' : '';
+      if(sg){ const c = sg.t === 'h' ? S.extra.cuts[sg.ci] : null; hint3(c ? `Coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » : ${c.z >= 0 ? '+' : ''}${c.z.toFixed(2)} m / ${zeroTxt()} — glisser pour déplacer, double-clic pour saisir la cote`
+        : `Coupe verticale ${sg.f.e.orientation} : ${sg.f.sLeft.toFixed(2)} m depuis l'angle gauche — glisser pour déplacer, double-clic pour saisir`); T3.tipHover = true; }
+      else if(T3.tipHover){ T3.tipHover = false; const m = T3.cutMode; T3.cutMode = null; setCutMode(m); } } return; }
   const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return;
   if(d.t === 'h'){ d.z = Math.max(d.lo, Math.min(d.hi, Math.round((q.y + T3.o[2] - d.zr) * 100) / 100)); d.obj.position.y = d.z - d.z0;
     hint3(`Coupe « ${S.extra.cuts[d.ci].name || 'niveau ' + (d.ci + 2)} » : cote ${d.z >= 0 ? '+' : ''}${d.z.toFixed(2)} m — relâchez pour appliquer`); }
