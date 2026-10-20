@@ -133,6 +133,7 @@ input.need{border-color:var(--crit-e);background:color-mix(in srgb,var(--crit-e)
 details.adv{margin-top:18px;border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
 .more-tools{display:inline-flex;flex-wrap:wrap;gap:6px}
 .tabs button b{font:600 11px var(--mono);color:var(--accent);margin-right:2px}
+.tabs .undo{margin-left:auto;display:flex;gap:4px;align-items:center;padding:0 2px}.tabs .undo button{font-size:16px;line-height:1;padding:3px 9px}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:-4px -4px 16px;padding:0 4px;overflow-x:auto}
 .tabs button{background:transparent;color:var(--muted);border:none;border-bottom:2px solid transparent;border-radius:0;padding:10px 12px}
 .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
@@ -163,9 +164,12 @@ input[type=number]{width:90px;font-family:var(--mono);font-size:13px}
 .v3d{position:relative;height:min(68vh,680px);min-height:360px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
 .v3d canvas{display:block}
 .d3edit{position:absolute;right:10px;top:10px;width:min(320px,calc(100% - 20px));background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px}
-.d3tip{position:absolute;left:10px;top:10px;max-width:min(460px,calc(100% - 360px));min-width:200px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);border-radius:var(--radius);padding:6px 10px;font-size:12.5px;pointer-events:none}
+.d3tip{position:absolute;left:10px;bottom:10px;max-width:calc(100% - 20px);min-width:200px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);border-radius:var(--radius);padding:6px 10px;font-size:12.5px;pointer-events:none}
 .d3tip:empty{display:none}
-@media (max-width:700px){.d3tip{max-width:calc(100% - 20px);top:auto;bottom:46px}}
+.d3side{display:flex;flex-direction:column;gap:10px;min-width:0}
+.d3win{border:1px solid var(--accent);border-radius:var(--radius);background:var(--surface);padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px}
+.d3win:empty{display:none}.d3win .d3h{font-weight:600;display:flex;justify-content:space-between;align-items:center}.d3win select{width:100%}
+@media (max-width:700px){.d3tip{max-width:calc(100% - 20px)}}
 .d3edit:empty{display:none}.d3edit .d3h{font-weight:600;display:flex;gap:8px;justify-content:space-between}.d3edit select{width:100%}
 button.sm{padding:4px 8px;font-size:12px}
 #d3-lines tbody tr{cursor:pointer}#d3-lines td.mono{white-space:nowrap}#d3-lines tbody tr.on td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
@@ -291,6 +295,7 @@ body.noscroll{overflow:hidden}
       <button role="tab" aria-selected="false" data-tab="t-plans" id="tb-plans"><b>3</b> Plans &amp; fenêtres <span class="badge" id="bd-plans">0</span></button>
       <button role="tab" aria-selected="false" data-tab="t-3d" id="tb-3d"><b>4</b> Enveloppe 3D</button>
       <button role="tab" aria-selected="false" data-tab="t-cecb" id="tb-cecb"><b>5</b> CECB <span class="badge" id="bd-cecb">0</span></button>
+      <span class="undo"><button type="button" class="ghost sm" id="undo" title="Annuler (Ctrl+Z)" aria-label="Annuler" disabled>↶</button><button type="button" class="ghost sm" id="redo" title="Rétablir (Ctrl+Y)" aria-label="Rétablir" disabled>↷</button></span>
     </div>
     <section id="t-res" role="tabpanel">
     <div class="empty" id="empty">
@@ -314,13 +319,14 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" data-view="cecb" aria-pressed="true">Décomposition CECB</button>
         <button type="button" class="tool" data-view="ori" aria-pressed="false">Orientations</button>
         <button type="button" class="tool" id="d3-hcut" aria-pressed="false" title="Clic sur une façade : coupe à cette hauteur sur toutes les façades (le pignon reste entier). Glisser une coupe pour la déplacer.">✂ Coupe horizontale</button>
+        <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · glisser : tourner · clic droit : déplacer</span>
       </div>
       <div class="v3dwrap"><div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
         <div class="d3edit" id="d3-edit" aria-live="polite"></div><div class="d3tip" id="d3-tip" aria-live="polite"></div></div>
-        <aside class="legend" id="d3-legend" aria-label="Légende des couleurs"></aside></div>
+        <div class="d3side"><div class="d3win" id="d3-win"></div><aside class="legend" id="d3-legend" aria-label="Légende des couleurs"></aside></div></div>
       <div id="d3-side">
         <details class="cuts" id="d3-cutbox"><summary><b>Découpes des façades</b> <span class="note">— plusieurs types de façade</span></summary>
           <p class="note" style="margin:6px 0"><b>Horizontales</b> (toutes les façades, le pignon reste entier) : outil « ✂ Coupe horizontale » puis clic sur une façade, ou cote du plan (par rapport au ±0.00), en général le dessus de la dalle. Chaque partie devient un élément CECB séparé avec son propre U (onglet 5).</p>
@@ -458,6 +464,17 @@ body.noscroll{overflow:hidden}
       <tfoot><tr><td>SRE chauffée</td><td class="n" id="c-sre-tot">0.00</td><td></td><td></td></tr></tfoot></table></div>
       <p class="hint">Remplissable depuis l'outil Surface de l'onglet Plans. Empreinte 3D pour contrôle : <span class="mono" id="c-fp">—</span> m².</p>
       <h2 style="margin-top:18px">Fenêtres et portes</h2>
+      <div id="qw">
+        <p class="hint" style="margin-top:0"><b>Sans plan :</b> définissez vos types de fenêtres, puis le nombre par façade (et par partie si les façades sont découpées). Ou posez-les directement sur la 3D, ou tracez-les sur une photo de façade.</p>
+        <div class="actions" style="margin:6px 0 10px"><button type="button" id="qw-3d-go">▭ Poser sur la 3D</button><button type="button" class="ghost" id="qw-photo">📷 Photo de façade</button></div>
+        <h3 style="margin:8px 0 4px;font-size:14px">Types</h3>
+        <div class="tablewrap"><table class="edit" id="qw-types"><thead><tr><th>Type</th><th>Genre</th><th class="n">Larg. m</th><th class="n">Haut. m</th><th class="n">m²</th><th></th></tr></thead><tbody></tbody></table></div>
+        <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="qw-addf">+ Type de fenêtre</button><button type="button" class="ghost sm" id="qw-addp">+ Type de porte</button></div>
+        <h3 style="margin:12px 0 4px;font-size:14px">Nombre par façade</h3>
+        <div class="tablewrap"><table class="edit" id="qw-mat"></table></div>
+        <p class="note" id="qw-3d"></p>
+      </div>
+      <h3 style="margin:14px 0 4px;font-size:14px">Liste détaillée (plans, 3D, saisie manuelle)</h3>
       <div class="tablewrap"><table class="edit" id="c-win"><thead><tr><th>ID</th><th>Type</th><th>Niveau</th><th>Façade</th><th class="n">Nb</th><th class="n">Larg. m</th><th class="n">Haut. m</th><th class="n">Surf. m²</th><th>Note</th><th></th></tr></thead><tbody></tbody>
       <tfoot><tr><td colspan="7">Total dans l'enveloppe (sous-sol non chauffé exclu)</td><td class="n" id="c-win-tot">0.00</td><td colspan="2"></td></tr></tfoot></table></div>
       <div class="actions" style="margin-top:10px"><button type="button" class="ghost" id="c-win-add">Ajouter une ligne</button></div>
@@ -2343,6 +2360,7 @@ function updateBadges(){
   $('bd-comp').textContent = n;
 }
 function complementsChanged(){
+  if(typeof undoLater === 'function') undoLater();
   updateBadges(); S.v3dDirty = true; if(!$('t-3d').hidden && S.res) show3D(true);
   if(S.res){ S.hyps = C.buildHypotheses(S.meta, S.res, S.b, S.nb, S.extra); render(); }
 }
@@ -2366,7 +2384,7 @@ function renderComp(){
   $('c-sre-tot').textContent = fmt(Object.values(S.extra.sre).filter((v) => v && v.s > 0 && (v.statut || 'Chauffé') === 'Chauffé').reduce((s, v) => s + v.s, 0));
   $('c-fp').textContent = S.res ? fmt(S.res.footprintArea) : '—';
   const fo = facadeOptions();
-  $('c-win').tBodies[0].innerHTML = (S.extra.fenetres || []).map((f, i) => {
+  $('c-win').tBodies[0].innerHTML = (S.extra.fenetres || []).map((f, i) => { if(f.gen === 'quick') return '';
     const fac = fo.includes(f.facade) || !f.facade ? fo : [...fo, f.facade];
     const A = f.l > 0 && f.h > 0 ? (f.nombre || 1) * f.l * f.h : 0;
     return `<tr data-i="${i}"><td class="mono">${f.type === 'Porte' ? 'P' : 'F'}-${String(i + 1).padStart(2, '0')}</td>
@@ -2381,6 +2399,7 @@ function renderComp(){
       <td><button type="button" class="x" data-del="${i}" title="Supprimer">×</button></td></tr>`;
   }).join('') || `<tr><td colspan="10" class="note">Aucune ouverture. Mesurez-les dans l'onglet Plans (outil Fenêtre) ou ajoutez une ligne.</td></tr>`;
   $('c-win-tot').textContent = fmt(Object.values(winByFacade()).reduce((s, a) => s + a, 0));
+  renderQuick();
 }
 document.querySelectorAll('input[name=combles]').forEach((r) => r.addEventListener('change', () => { S.extra.combles = r.value || null; complementsChanged(); }));
 document.querySelectorAll('input[name=soussol]').forEach((r) => r.addEventListener('change', () => { S.extra.soussol = r.value || null; renderSSFields(); complementsChanged(); }));
@@ -2521,7 +2540,8 @@ async function addPlanFiles(files){
     try{
       status(`Lecture du plan ${f.name}…`);
       if(/\.pdf$/i.test(f.name) || f.type === 'application/pdf') await loadPdf(f);
-      else if(/^image\//.test(f.type) || /\.(png|jpe?g)$/i.test(f.name)) await loadImg(f);
+      else if(/^image\//.test(f.type) || /\.(png|jpe?g)$/i.test(f.name)){ await loadImg(f);
+        if(S.photoNext){ S.photoNext = false; setTool('photo'); } }
       else throw new Error('format non pris en charge (PDF, PNG, JPG)');
       status(`Plan ${f.name} chargé. Calez l'échelle avant de mesurer.`);
     }catch(ex){ status(`Plan ${f.name} : ${ex.message}`, true); }
@@ -3698,10 +3718,10 @@ function init3D(){
   const lg = $('d3-legend');                     // légende à côté de la vue 3D
   T3 = { r, sc, cam, ctl, lg, group: null, b: null, view: 'cecb', sel: [], render(){ r.render(sc, cam); } };
   ctl.addEventListener('change', () => T3.render());
-  let down = null; r.domElement.addEventListener('pointerdown', (e) => { down = dragStart(e) ? null : [e.clientX, e.clientY]; }, true);
-  r.domElement.addEventListener('pointermove', (e) => dragMove(e));
+  let down = null; r.domElement.addEventListener('pointerdown', (e) => { down = (wDragStart(e) || dragStart(e)) ? null : [e.clientX, e.clientY]; }, true);
+  r.domElement.addEventListener('pointermove', (e) => { if(!wDragMove(e)) dragMove(e); });
   r.domElement.addEventListener('dblclick', (e) => cutDbl(e));
-  r.domElement.addEventListener('pointerup', (e) => { if(dragEnd()){ down = null; return; } if(down && e.button === 0 && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) pick3D(e); down = null; });
+  r.domElement.addEventListener('pointerup', (e) => { if(wDragEnd()){ down = null; return; } if(dragEnd()){ down = null; return; } if(down && e.button === 0 && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) pick3D(e); down = null; });
   if(window.ResizeObserver) new ResizeObserver(() => resize3D()).observe(el);
 }
 function resize3D(){
@@ -3766,8 +3786,8 @@ function build3D(){
   cN.font = '700 44px ' + css('--sans'); cN.fillStyle = '#' + ink.getHexString(); cN.textAlign = 'center'; cN.textBaseline = 'middle'; cN.fillText('N', 32, 34);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cvN), transparent: true }));
   sp.scale.set(R * 0.28, R * 0.28, 1); sp.position.set(0, R * 0.25, -R * 1.95); g.add(sp);
-  // fenêtres positionnées depuis les plans
-  let nWin = 0, nOff = 0;
+  // fenêtres positionnées depuis les plans ou posées dans la 3D
+  let nWin = 0, nOff = 0; T3.winPick = [];
   (S.extra.fenetres || []).forEach((f) => {
     if(!(f.l > 0 && f.h > 0)) return;
     if(/^Pan /.test(f.facade || '') && f.pos){                       // fenêtre de toit : projetée sur le pan
@@ -3792,9 +3812,10 @@ function build3D(){
     const A = c(-f.l / 2, zb), B = c(f.l / 2, zb), C2 = c(f.l / 2, zb + f.h), D = c(-f.l / 2, zb + f.h);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3)); geo.computeVertexNormals();
     const wi = DC && DC.winOf.get(f), inEnv = wi ? !wi.out : C.counted(f, S.extra);
-    g.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(inEnv ? '#cfeaff' : '#8e979c'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
+    const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : inEnv ? '#cfeaff' : '#8e979c'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    wm.userData.win = f.uid; wm.userData.e = e; g.add(wm); T3.winPick.push(wm);
     const fr = new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v)));
-    g.add(new THREE.Line(fr, new THREE.LineBasicMaterial({ color: new THREE.Color('#1c2a33') })));
+    wm.add(new THREE.Line(fr, new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
     nWin += f.nombre || 1;
   });
   T3.nWin = nWin; T3.nOff = nOff;
@@ -4174,6 +4195,7 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
     else if(f.pos && fac){ const loc = locateOn(fac, f.pos.s); if(loc){ const ei = res.edges.indexOf(loc.e), zc = zAbs(fac, f.pos) + (f.h || 0) / 2;
       const cand = pieces.filter((p) => p.kind === 'mur' && p.edge === ei);
       pc = cand.find((p) => p.poly.some((pg) => pointIn(pg, loc.sl, zc))) || cand.sort((a, c) => Math.abs((a.band === 'mur' ? 0 : 1)) - Math.abs((c.band === 'mur' ? 0 : 1)) || c.area - a.area)[0] || null; } }
+    if(!pc && fac && f.part){ pc = pieces.filter((p) => p.kind === 'mur' && p.orientation === fac && p.ter === 'hs' && p.zone === f.part).sort((a, c) => c.area - a.area)[0] || null; }
     if(!pc && fac){ const wantBas = f.niveau === 'Sous-sol' && res.zCut != null;
       const cand = pieces.filter((p) => p.kind === 'mur' && p.orientation === fac && p.ter === 'hs' && p.band === (wantBas ? 'bas' : 'mur')).sort((a, c) => c.area - a.area);
       pc = cand[0] || pieces.filter((p) => p.kind === 'mur' && p.orientation === fac).sort((a, c) => c.area - a.area)[0] || null; }
@@ -4561,11 +4583,168 @@ function pick3D(ev){
   const rc = new THREE.Raycaster(); rc.setFromCamera(v, T3.cam);
   const hit = rc.intersectObjects(T3.pick, false)[0], k = hit && hit.object.userData.key;
   if(T3.cutMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) cutAt(hit, p); return; }
+  if(T3.winMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) wPlace(hit, p); return; }
   if(!k){ if(!ev.shiftKey){ T3.sel = []; build3D(); } return; }
   const ln = !ev.altKey && T3.dc && T3.dc.lineOf.get(k), ks = ln ? ln.keys.slice() : [k];      // clic = tout l'élément CECB ; Alt + clic = un seul morceau
   const cur = T3.sel || []; T3.sel = ev.shiftKey ? (ks.every((x) => cur.includes(x)) ? cur.filter((x) => !ks.includes(x)) : [...new Set([...cur, ...ks])]) : ks;
   build3D();
 }
+
+// ============================================================ fenêtres sans plan : types, saisie rapide par façade, pose dans la 3D
+/* S.extra.wtypes = [{ id: 'F1', kind: 'Fenêtre'|'Porte', l, h }] ; S.extra.wqty = { 'F1|Sud|partie': n }.
+   La saisie rapide génère des ouvertures (gen 'quick', sans position : rattachées à la partie de façade choisie).
+   Les fenêtres posées dans la 3D (gen '3d') ont une position et suivent les dimensions de leur type. */
+const WT = () => (S.extra.wtypes = S.extra.wtypes || []);
+function wtNew(kind, l, h){ const ts = WT(), pre = kind === 'Porte' ? 'P' : 'F'; let k = 1; while(ts.some((t) => t.id === pre + k)) k++;
+  const t = { id: pre + k, kind, l, h }; ts.push(t); return t; }
+// parties de façade (orientation + nom de la partie) : colonnes de la saisie rapide
+function wParts(){
+  if(!S.res) return []; const DC = cecbData(), m = new Map();
+  DC.pieces.forEach((p) => { if(p.kind !== 'mur' || p.ter !== 'hs' || p.type === C.OUT || (p.band === 'bas' && S.extra.soussol !== 'chauffé')) return;
+    const k = `${p.orientation}|${p.zone || ''}`, x = m.get(k) || { k, ori: p.orientation, zone: p.zone || '', A: 0 }; x.A += p.area; m.set(k, x); });
+  Object.keys(S.extra.wqty || {}).forEach((q) => { const [, ori, zone] = q.split('|'); const k = `${ori}|${zone || ''}`; if(!m.has(k)) m.set(k, { k, ori, zone: zone || '', A: 0, gone: true }); });
+  return [...m.values()].sort((a, b) => C.SECTORS.indexOf(a.ori) - C.SECTORS.indexOf(b.ori) || a.zone.localeCompare(b.zone));
+}
+function wSync(){                           // régénère les ouvertures de la saisie rapide, met à jour celles posées en 3D
+  const ts = WT(), byId = new Map(ts.map((t) => [t.id, t])), q = S.extra.wqty || {};
+  S.extra.fenetres = (S.extra.fenetres || []).filter((f) => f.gen !== 'quick' && !(f.gen === '3d' && !byId.has(f.typeId)));
+  S.extra.fenetres.forEach((f) => { if(f.gen === '3d'){ const t = byId.get(f.typeId); f.l = t.l; f.h = t.h; f.type = t.kind; } });
+  Object.entries(q).forEach(([k, n]) => { const [id, ori, zone] = k.split('|'), t = byId.get(id); if(!t || !(n > 0)) return;
+    S.extra.fenetres.push({ uid: 'q|' + k, gen: 'quick', typeId: id, type: t.kind, niveau: '', facade: ori, part: zone || null, nombre: n, l: t.l, h: t.h, note: `saisie rapide ${id}` }); });
+}
+function renderQuick(){
+  const box = $('qw'); if(!box) return; const ts = WT(), parts = wParts(), q = S.extra.wqty || {};
+  const n3d = (id, pk) => (S.extra.fenetres || []).filter((f) => f.gen === '3d' && f.typeId === id && `${f.facade}|${(T3 && T3.dc && f.__part) || ''}` === pk).length;
+  $('qw-types').tBodies[0].innerHTML = ts.map((t, i) => `<tr data-t="${i}"><td class="mono"><b>${esc(t.id)}</b></td><td><select data-k="kind" aria-label="Genre ${esc(t.id)}">${opt(['Fenêtre', 'Porte'], t.kind)}</select></td>
+      <td class="n"><input type="number" step="0.01" min="0" data-k="l" value="${t.l || ''}" aria-label="Largeur ${esc(t.id)}"></td><td class="n"><input type="number" step="0.01" min="0" data-k="h" value="${t.h || ''}" aria-label="Hauteur ${esc(t.id)}"></td>
+      <td class="n">${fmt((t.l || 0) * (t.h || 0))}</td><td><button type="button" class="x" data-tdel="${i}" title="Supprimer ce type (et ses fenêtres)">×</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="note">Aucun type. Ajoutez p. ex. F1 = 1.20 × 1.40 m.</td></tr>';
+  const mat = $('qw-mat');
+  if(!ts.length || !parts.length){ mat.innerHTML = `<tbody><tr><td class="note">${!S.res ? 'Analysez d\'abord le bâtiment (onglet 1).' : 'Ajoutez un type de fenêtre.'}</td></tr></tbody>`; return; }
+  const placed = {}; (S.extra.fenetres || []).forEach((f) => { if(f.gen === '3d') placed[f.typeId + '|' + f.facade] = (placed[f.typeId + '|' + f.facade] || 0) + 1; });
+  mat.innerHTML = `<thead><tr><th>Type</th>${parts.map((p) => `<th class="n" title="${esc(p.ori + (p.zone ? ' — ' + p.zone : ''))}${p.gone ? ' (partie disparue)' : ''}">${esc(p.ori)}${p.zone ? `<div class="note" style="font-weight:400">${esc(p.zone)}</div>` : ''}</th>`).join('')}<th class="n">Total m²</th></tr></thead>
+    <tbody>${ts.map((t) => { let tot = 0; return `<tr><td class="mono"><b>${esc(t.id)}</b> <span class="note">${fmt(t.l)}×${fmt(t.h)}</span></td>${parts.map((p) => { const k = `${t.id}|${p.k}`, v = q[k] || 0; tot += v * t.l * t.h;
+        return `<td class="n"><input type="number" min="0" step="1" class="qn" data-q="${esc(k)}" value="${v || ''}" placeholder="0" aria-label="${esc(t.id + ' ' + p.ori + ' ' + p.zone)}" style="width:58px"></td>`; }).join('')}<td class="n">${fmt(tot)}</td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td>Surface m²</td>${parts.map((p) => `<td class="n">${fmt(ts.reduce((s, t) => s + (q[`${t.id}|${p.k}`] || 0) * t.l * t.h, 0))}</td>`).join('')}<td></td></tr></tfoot>`;
+  const pl = Object.entries(placed); $('qw-3d').textContent = pl.length ? `En plus, posées dans la 3D : ${pl.map(([k, n]) => `${n} × ${k.replace('|', ' ')}`).join(', ')}.` : '';
+}
+function wChanged(){ wSync(); renderQuick(); renderComp(); complementsChanged(); }
+$('qw-types').addEventListener('change', (e) => { const tr = e.target.closest('tr[data-t]'), k = e.target.dataset.k; if(!tr || !k) return; const t = WT()[+tr.dataset.t];
+  t[k] = k === 'kind' ? e.target.value : (parseFloat(String(e.target.value).replace(',', '.')) || 0); wChanged(); });
+$('qw-types').addEventListener('click', (e) => { const d = e.target.closest('[data-tdel]'); if(!d) return; const t = WT()[+d.dataset.tdel];
+  const n = Object.entries(S.extra.wqty || {}).filter(([k, v]) => k.startsWith(t.id + '|') && v > 0).length + (S.extra.fenetres || []).filter((f) => f.gen === '3d' && f.typeId === t.id).length;
+  if(n && !confirm(`Supprimer le type ${t.id} et ses fenêtres ?`)) return;
+  WT().splice(+d.dataset.tdel, 1); Object.keys(S.extra.wqty || {}).forEach((k) => { if(k.startsWith(t.id + '|')) delete S.extra.wqty[k]; }); wChanged(); });
+$('qw-mat').addEventListener('change', (e) => { const i = e.target.closest('input.qn'); if(!i) return; const v = Math.max(0, Math.round(parseFloat(i.value) || 0));
+  S.extra.wqty = S.extra.wqty || {}; if(v) S.extra.wqty[i.dataset.q] = v; else delete S.extra.wqty[i.dataset.q]; wChanged(); });
+$('qw-addf').onclick = () => { wtNew('Fenêtre', 1.2, 1.4); wChanged(); };
+$('qw-addp').onclick = () => { wtNew('Porte', 1.0, 2.1); wChanged(); };
+$('qw-photo').onclick = () => { S.photoNext = true; showTab('t-plans'); $('pl-file').click(); };
+$('qw-3d-go').onclick = () => { showTab('t-3d'); setTimeout(() => { if(T3 && !T3.winMode) setWinMode(true); }, 300); };
+
+// ---- pose / déplacement / duplication dans la 3D
+function setWinMode(on){
+  if(!T3) return; T3.winMode = on; if(on && T3.cutMode) setCutMode(T3.cutMode);
+  $('d3-wmode').setAttribute('aria-pressed', on ? 'true' : 'false'); T3.r.domElement.style.cursor = on ? 'copy' : '';
+  if(on && !WT().some((t) => t.kind === 'Fenêtre')) { wtNew('Fenêtre', 1.2, 1.4); wSync(); }
+  if(!on){ T3.wsel = null; } renderWinPanel(); build3D();
+}
+function renderWinPanel(){
+  const box = $('d3-win'); if(!T3 || !T3.winMode){ box.innerHTML = ''; return; }
+  const ts = WT(), cur = T3.wType && ts.find((t) => t.id === T3.wType) ? T3.wType : (ts[0] || {}).id; T3.wType = cur;
+  const f = T3.wsel && (S.extra.fenetres || []).find((x) => x.uid === T3.wsel);
+  box.innerHTML = `<div class="d3h">Fenêtres <button type="button" class="ghost sm" id="w-end">Terminer</button></div>
+    <label for="w-type">Type posé au clic</label><select id="w-type">${ts.map((t) => `<option value="${esc(t.id)}"${t.id === cur ? ' selected' : ''}>${esc(t.id)} — ${esc(t.kind)} ${fmt(t.l)} × ${fmt(t.h)} m</option>`).join('')}</select>
+    <div class="row" style="gap:6px;align-items:end;margin-top:4px"><input type="number" step="0.01" id="w-nl" placeholder="larg." style="width:70px" aria-label="Largeur nouveau type"><span>×</span><input type="number" step="0.01" id="w-nh" placeholder="haut." style="width:70px" aria-label="Hauteur nouveau type"><button type="button" class="ghost sm" id="w-new">+ type</button></div>
+    ${f ? `<div class="note" style="margin-top:6px">Sélection : <b>${esc(f.typeId || '')}</b> ${fmt(f.l)} × ${fmt(f.h)} m, ${esc(f.facade)} <button type="button" class="ghost sm" id="w-del">Supprimer</button></div>` : ''}
+    <p class="note" style="margin:6px 0 0">Clic sur une façade : poser · glisser une fenêtre : déplacer (alignement automatique sur les autres) · Ctrl + glisser : dupliquer · Suppr : effacer · Ctrl+Z : annuler</p>`;
+  $('w-type').onchange = (e) => { T3.wType = e.target.value; };
+  $('w-end').onclick = () => setWinMode(false);
+  $('w-new').onclick = () => { const l = parseFloat($('w-nl').value), h = parseFloat($('w-nh').value); if(!(l > 0 && h > 0)) return; const t = wtNew('Fenêtre', l, h); T3.wType = t.id; wChanged(); renderWinPanel(); };
+  if($('w-del')) $('w-del').onclick = () => wDelete();
+}
+function wDelete(){ if(!T3 || !T3.wsel) return; S.extra.fenetres = S.extra.fenetres.filter((x) => x.uid !== T3.wsel); T3.wsel = null; renderWinPanel(); wChanged(); }
+document.addEventListener('keydown', (e) => { if(!T3 || !T3.winMode || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
+  if((e.key === 'Delete' || e.key === 'Backspace') && T3.wsel){ e.preventDefault(); wDelete(); }
+  if(e.key === 'Escape') setWinMode(false); });
+// position façade (fraction s du repère d'élévation, bas calé sous le faîte) d'un point 3D ; accroche aux autres fenêtres
+function wPosAt(fac, E, N, zb, w, exceptUid){
+  const F = facFrame(fac); if(!F) return null; let t = E * F.r[0] + N * F.r[1], snapT = false, snapZ = false;
+  (S.extra.fenetres || []).forEach((o) => { if(o.uid === exceptUid || o.facade !== fac || !o.pos || o.gen === 'quick') return;
+    const tc = F.t0 + o.pos.s * F.W, zo = zAbs(fac, o.pos);
+    if(!snapT && Math.abs(tc - t) < 0.2){ t = tc; snapT = true; }                         // même axe vertical
+    if(!snapZ && isFinite(zo) && Math.abs(zo - zb) < 0.15){ zb = zo; snapZ = true; } });  // même allège
+  t = Math.max(F.t0 + w / 2, Math.min(F.t1 - w / 2, t));
+  return { pos: { s: +((t - F.t0) / F.W).toFixed(4), dR: +(ridge3D() - zb).toFixed(3) }, snapT, snapZ };
+}
+function wPlace(hit, p){
+  if(p.kind !== 'mur' || !(p.edge >= 0)){ hint3('Cliquez sur une façade.'); return; }
+  const t = WT().find((x) => x.id === T3.wType); if(!t) return;
+  const e = S.res.edges[p.edge], o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2];
+  const r = wPosAt(e.orientation, E, N, Z - t.h / 2, t.l); if(!r) return;
+  const f = { uid: uid(), gen: '3d', typeId: t.id, type: t.kind, niveau: '', facade: e.orientation, nombre: 1, l: t.l, h: t.h, pos: r.pos, note: `posée en 3D ${t.id}` };
+  S.extra.fenetres.push(f); T3.wsel = f.uid; renderWinPanel(); wChanged();
+  hint3(`${t.id} posée sur ${e.orientation}${r.snapT || r.snapZ ? ' (alignée' + (r.snapZ ? ' en hauteur' : '') + (r.snapT ? ' en axe' : '') + ')' : ''}.`);
+}
+function wDragStart(ev){
+  if(!T3 || !T3.winMode || ev.button !== 0 || !T3.winPick || !T3.winPick.length) return false;
+  const hit = ray3(ev).intersectObjects(T3.winPick, false)[0]; if(!hit) return false;
+  const f = (S.extra.fenetres || []).find((x) => x.uid === hit.object.userData.win); if(!f || !f.pos) return false;
+  const e = hit.object.userData.e, plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(e.n[0], 0, -e.n[1]), hit.point);
+  T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane, dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, z0: zAbs(f.facade, f.pos), c0: null };
+  const F = facFrame(f.facade); T3.wdrag.c0 = F.t0 + f.pos.s * F.W;
+  T3.ctl.enabled = false; T3.wsel = f.uid; return true;
+}
+function wDragMove(ev){ const d = T3 && T3.wdrag; if(!d) return false; const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return true;
+  const F = facFrame(d.f.facade), dE = q.x - d.p0.x, dN = -(q.z - d.p0.z), dZ = q.y - d.p0.y;
+  const tc = d.c0 + dE * F.r[0] + dN * F.r[1], E = tc * F.r[0], N = tc * F.r[1];       // point sur l'axe r (la composante normale est ignorée par wPosAt)
+  const r = wPosAt(d.f.facade, E, N, d.z0 + dZ, d.f.l, d.dup ? null : d.f.uid); if(!r) return true; d.r = r; d.moved = true;
+  const ds = (r.pos.s * F.W + F.t0) - d.c0, dz = (ridge3D() - r.pos.dR) - d.z0;
+  d.obj.position.set(F.r[0] * ds, dz, -F.r[1] * ds); T3.render();
+  hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} : ${r.snapZ ? 'allège alignée' : ''}${r.snapZ && r.snapT ? ', ' : ''}${r.snapT ? 'axe aligné' : ''}${!r.snapZ && !r.snapT ? 'relâchez pour poser' : ''}`); return true; }
+function wDragEnd(){ const d = T3 && T3.wdrag; if(!d) return false; T3.wdrag = null; T3.ctl.enabled = true;
+  if(d.moved && d.r){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos: d.r.pos }); delete c.fs; delete c.fsInfo; S.extra.fenetres.push(c); T3.wsel = c.uid; }
+    else { d.f.pos = Object.assign({}, d.f.pos, d.r.pos); delete d.f.pos.zA; delete d.f.pos.zB; delete d.f.fs; delete d.f.fsInfo; } }
+  hint3(''); renderWinPanel(); wChanged(); return true; }
+$('d3-wmode').onclick = () => setWinMode(!(T3 && T3.winMode));
+
+// ============================================================ annuler / rétablir (Ctrl+Z, Ctrl+Y)
+/* Instantanés de l'état saisi (S.extra + mesures des plans). Un nouvel état est enregistré après chaque action
+   (clic relâché, champ modifié, touche, recalcul) s'il diffère du précédent. */
+const UNDO = { stack: [], redo: [], cur: null, busy: false };
+const undoState = () => JSON.stringify({ x: S.extra, m: S.plans.map((p) => p.measures.filter((m) => !m.tmp)) });
+const ANALYSIS_KEYS = ['split', 'corrL', 'z00', 'zBase', 'zRadier', 'groundLine', 'groundZ'];
+function undoCommit(){
+  if(UNDO.busy) return; let st; try{ st = undoState(); }catch(ex){ return; }
+  if(UNDO.cur == null){ UNDO.cur = st; return; }
+  if(st === UNDO.cur) return;
+  UNDO.stack.push(UNDO.cur); if(UNDO.stack.length > 150) UNDO.stack.shift(); UNDO.cur = st; UNDO.redo = []; undoBtns();
+}
+const undoLater = () => setTimeout(undoCommit, 0);
+async function undoApply(st){
+  UNDO.busy = true;
+  try{
+    const o = JSON.parse(st), prev = S.extra, reanalyse = ANALYSIS_KEYS.some((k) => JSON.stringify(prev[k] ?? null) !== JSON.stringify(o.x[k] ?? null));
+    S.extra = o.x; S.plans.forEach((p, i) => { if(o.m[i]) p.measures = o.m[i]; });
+    UNDO.cur = st; T3 && (T3.sel = []);
+    renderComp(); updateBadges(); renderList(); draw();
+    if(reanalyse && S.bOrig) await analyseBuilding(S.bOrig, S.whyOrig, S.manualOrig);
+    else complementsChanged();
+  }catch(ex){ status('Annuler : ' + ex.message, true); }
+  UNDO.busy = false; UNDO.cur = undoState(); undoBtns();
+}
+function undo(){ undoCommit(); if(!UNDO.stack.length){ status('Rien à annuler.'); return; } UNDO.redo.push(UNDO.cur); undoApply(UNDO.stack.pop()); status('Action annulée (Ctrl+Y pour rétablir).'); }
+function redo(){ if(!UNDO.redo.length){ status('Rien à rétablir.'); return; } UNDO.stack.push(UNDO.cur); undoApply(UNDO.redo.pop()); status('Action rétablie.'); }
+function undoBtns(){ const u = $('undo'), r = $('redo'); if(u) u.disabled = !UNDO.stack.length; if(r) r.disabled = !UNDO.redo.length; }
+document.addEventListener('keydown', (e) => {
+  if(!(e.ctrlKey || e.metaKey) || e.altKey) return; const k = e.key.toLowerCase();
+  const t = e.target, typing = t && (t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'file'].includes(t.type)));
+  if(typing) return;                                            // dans un champ : annulation native du texte
+  if(k === 'z' && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(k === 'y' || (k === 'z' && e.shiftKey)){ e.preventDefault(); redo(); }
+});
+['pointerup', 'change', 'keyup'].forEach((ev) => document.addEventListener(ev, undoLater, true));
+$('undo').onclick = undo; $('redo').onclick = redo;
 
 // ============================================================ dossier
 function slugOf(l){ return (l || 'metre3d').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60); }
@@ -4626,7 +4805,7 @@ function exportDae(){
     if(key && DC){ const p = DC.byKey.get(key); if(!p) return; const line = DC.lineOf.get(key);
       const name = `${line ? line.code + ' ' + line.name : 'Hors enveloppe'} — ${p.label || p.key}`;
       nodes.env.push({ name, mat: mat(p.type, '#' + new THREE.Color(catCol(p.type)).getHexString()), tris: orient(trisOf(o), p.kind === 'sol' ? 'down' : 'out', [0, 0, 0]) }); return; }
-    if(mt && mt.isMeshBasicMaterial){ const glass = mt.color.getHexString() === 'cfeaff';
+    if(mt && mt.isMeshBasicMaterial){ const glass = ['cfeaff', 'ffd43b'].includes(mt.color.getHexString());
       nodes.win.push({ name: glass ? 'Fenêtre' : 'Fenêtre hors enveloppe', mat: mat(glass ? 'Vitrage' : 'Vitrage hors enveloppe', '#' + mt.color.getHexString(), 0.6), tris: orient(trisOf(o), 'out', [0, 0, 0]) }); return; }
     if(mt && mt.transparent && mt.opacity < 1 && mt.vertexColors){ const t = trisOf(o); if(!t.length) return;
       const c0 = [0, 1, 2].map((k) => t.reduce((s, q) => s + q[k], 0) / t.length);
