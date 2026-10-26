@@ -323,10 +323,10 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" data-view="cecb" aria-pressed="true">Décomposition CECB</button>
         <button type="button" class="tool" data-view="ori" aria-pressed="false">Orientations</button>
         <button type="button" class="tool" id="d3-hcut" aria-pressed="false" title="Clic sur une façade : coupe à cette hauteur sur toutes les façades (le pignon reste entier). Glisser une coupe pour la déplacer.">✂ Coupe horizontale</button>
-        <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
+        <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
-        <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · glisser : tourner · clic droit : déplacer</span>
+        <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
       </div>
       <div class="v3dwrap"><div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
         <div class="d3edit" id="d3-edit" aria-live="polite"></div><div class="d3tip" id="d3-tip" aria-live="polite"></div></div>
@@ -4329,7 +4329,7 @@ function renderCuts(){
     S.extra.cuts = [...tb.querySelectorAll('tr[data-c]')].map((tr) => ({ name: tr.querySelector('[data-n]').value.trim(), z: parseFloat(tr.querySelector('[data-z]').value) })).filter((x) => isFinite(x.z)).sort((a, b) => a.z - b.z);
     T3.sel = []; complementsChanged(); };
   tb.querySelectorAll('input').forEach((el) => { el.onchange = save; });
-  tb.querySelectorAll('[data-del]').forEach((bt) => { bt.onclick = () => { const i = +bt.dataset.del; hReKey(i, S.extra.cuts.length, 'merge'); S.extra.cuts.splice(i, 1); T3.sel = []; complementsChanged(); }; });
+  tb.querySelectorAll('[data-del]').forEach((bt) => { bt.onclick = () => delHCut(+bt.dataset.del); });
 }
 $('d3-cut-add').onclick = () => { const cs = S.extra.cuts = S.extra.cuts || [], last = cs.length ? cs[cs.length - 1].z : 0;
   const z = prompt('Cote du plan (m, par rapport au ±0.00) où commence la partie supérieure — p. ex. le dessus de la dalle du 1er étage :', (last + 2.8).toFixed(2));
@@ -4433,10 +4433,12 @@ function renderVCuts(){
     : '<tr><td colspan="3" class="note">Aucune coupe verticale.</td></tr>';
   tb.querySelectorAll('[data-s]').forEach((el) => { el.onchange = () => { const i = +el.closest('tr').dataset.v, f = vcInfo(vc[i]), v = parseFloat(el.value); if(!f || !isFinite(v)) return;
     moveVCut(i, f, f.incR ? v : f.e.L - v); }; });
-  tb.querySelectorAll('[data-vdel]').forEach((bt) => { bt.onclick = () => { const i = +bt.dataset.vdel, f = vcInfo(vc[i]);
-    if(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j = vs.findIndex((x) => Math.abs(x - f.s) < 0.06); if(j >= 0) vReKey(f.edge, j, vs.length, 'merge'); }
-    vc.splice(i, 1); T3.sel = []; complementsChanged(); }; });
+  tb.querySelectorAll('[data-vdel]').forEach((bt) => { bt.onclick = () => delVCut(+bt.dataset.vdel); });
 }
+function delHCut(i){ const cs = S.extra.cuts || []; if(!cs[i]) return; hReKey(i, cs.length, 'merge'); cs.splice(i, 1); if(T3){ T3.sel = []; T3.cutSel = null; } complementsChanged(); }
+function delVCut(i){ const vc = S.extra.vcuts || [], f = vc[i] && vcInfo(vc[i]); if(!vc[i]) return;
+  if(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j = vs.findIndex((x) => Math.abs(x - f.s) < 0.06); if(j >= 0) vReKey(f.edge, j, vs.length, 'merge'); }
+  vc.splice(i, 1); if(T3){ T3.sel = []; T3.cutSel = null; } complementsChanged(); }
 // déplacer une coupe verticale sans changer l'ordre des parties (noms et types conservés)
 function vLimits(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j = vs.findIndex((x) => Math.abs(x - f.s) < 0.06);
   return [j > 0 ? vs[j - 1] + 0.1 : 0.3, j >= 0 && j < vs.length - 1 ? vs[j + 1] - 0.1 : f.e.L - 0.3]; }
@@ -4457,6 +4459,10 @@ function drawCuts(g, DC, P, res){
   (S.extra.vcuts || []).forEach((c, vi) => { const f = vcInfo(c); if(!f) return; const r = rng.get(f.edge); if(!r) return;
     const A = at(f.e, f.s, r[0]), B = at(f.e, f.s, r[1]), l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B]), mat); l.renderOrder = 5; g.add(l);
     T3.cutSegs.push({ t: 'v', vi, f, A, B, e: f.e, obj: l }); });
+  // coupe sélectionnée : tube bleu (Suppr pour la supprimer)
+  const cs = T3.cutSel; if(cs){ const tm = new THREE.MeshBasicMaterial({ color: new THREE.Color('#1c7ed6'), depthTest: false, transparent: true, opacity: 0.9 });
+    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'h' ? sg.ci === cs.i : sg.vi === cs.i)).forEach((sg) => {
+      const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(sg.A, sg.B), 2, 0.07, 6, false), tm); m.renderOrder = 6; sg.obj.add ? sg.obj.add(m) : g.add(m); }); }
 }
 // glisser une coupe (tous les modes) : la ligne rouge la plus proche du pointeur, à moins de 8 px
 function ray3(ev){ const r = T3.r.domElement.getBoundingClientRect(), v = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
@@ -4503,6 +4509,9 @@ function dragEnd(){ const d = T3 && T3.drag; if(!d) return false; T3.drag = null
   const m = T3.cutMode; T3.cutMode = null; setCutMode(m); if(!m) hint3('');
   if(d.t === 'h' && Math.abs(d.z - d.z0) >= 0.01){ S.extra.cuts[d.ci].z = d.z; T3.sel = []; complementsChanged(); }
   if(d.t === 'v' && Math.abs(d.s - d.s0) >= 0.01) moveVCut(d.vi, d.f, d.s);
+  if((d.t === 'h' && Math.abs(d.z - d.z0) < 0.01) || (d.t === 'v' && Math.abs(d.s - d.s0) < 0.01)){   // simple clic : sélection
+    T3.cutSel = { t: d.t, i: d.t === 'h' ? d.ci : d.vi }; T3.sel = []; T3.wsel = null; build3D();
+    const c = d.t === 'h' ? S.extra.cuts[d.ci] : null; hint3(`${c ? `Coupe horizontale « ${c.name || 'niveau ' + (d.ci + 2)} »` : 'Coupe verticale ' + d.f.e.orientation} sélectionnée — Suppr pour la supprimer, Échap pour désélectionner`); }
   return true; }
 function setType(ps, t){
   S.extra.adj = S.extra.adj || {};
@@ -4701,7 +4710,11 @@ function pick3D(ev){
   const rc = new THREE.Raycaster(); rc.setFromCamera(v, T3.cam);
   const hit = rc.intersectObjects(T3.pick, false)[0], k = hit && hit.object.userData.key;
   if(T3.cutMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) cutAt(hit, p); return; }
+  const wh = T3.winPick && rc.intersectObjects(T3.winPick, false)[0];
+  if(wh && (!hit || wh.distance <= hit.distance + 0.1)){ T3.wsel = wh.object.userData.win; T3.sel = []; T3.cutSel = null; renderWinPanel(); build3D();
+    const f = (S.extra.fenetres || []).find((x) => x.uid === T3.wsel); if(f) hint3(`${f.type === 'Porte' ? 'Porte' : 'Fenêtre'} ${f.typeId || ''} ${fmt(f.l)} × ${fmt(f.h)} m (${f.facade}) sélectionnée — Suppr pour la supprimer${T3.winMode ? ', glisser pour la déplacer' : ''}`); return; }
   if(T3.winMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) wPlace(hit, p); return; }
+  if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); }
   if(!k){ if(!ev.shiftKey){ T3.sel = []; build3D(); } return; }
   const ln = !ev.altKey && T3.dc && T3.dc.lineOf.get(k), ks = ln ? ln.keys.slice() : [k];      // clic = tout l'élément CECB ; Alt + clic = un seul morceau
   const cur = T3.sel || []; T3.sel = ev.shiftKey ? (ks.every((x) => cur.includes(x)) ? cur.filter((x) => !ks.includes(x)) : [...new Set([...cur, ...ks])]) : ks;
@@ -4781,10 +4794,15 @@ function renderWinPanel(){
   $('w-new').onclick = () => { const l = parseFloat($('w-nl').value), h = parseFloat($('w-nh').value); if(!(l > 0 && h > 0)) return; const t = wtNew('Fenêtre', l, h); T3.wType = t.id; wChanged(); renderWinPanel(); };
   if($('w-del')) $('w-del').onclick = () => wDelete();
 }
-function wDelete(){ if(!T3 || !T3.wsel) return; S.extra.fenetres = S.extra.fenetres.filter((x) => x.uid !== T3.wsel); T3.wsel = null; renderWinPanel(); wChanged(); }
-document.addEventListener('keydown', (e) => { if(!T3 || !T3.winMode || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
-  if((e.key === 'Delete' || e.key === 'Backspace') && T3.wsel){ e.preventDefault(); wDelete(); }
-  if(e.key === 'Escape') setWinMode(false); });
+function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenetres = S.extra.fenetres.filter((x) => x.uid !== u);
+  S.plans.forEach((p) => { p.measures = p.measures.filter((m) => m.uid !== u); }); T3.wsel = null; hint3('Fenêtre supprimée (Ctrl+Z pour annuler).'); renderWinPanel(); wChanged(); renderList(); draw(); }
+// Suppr dans la vue 3D : coupe sélectionnée, fenêtre sélectionnée, sinon éléments sélectionnés → hors enveloppe
+document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
+  if(e.key === 'Delete' || e.key === 'Backspace'){
+    if(T3.cutSel){ e.preventDefault(); const c = T3.cutSel; T3.cutSel = null; if(c.t === 'h') delHCut(c.i); else delVCut(c.i); hint3('Coupe supprimée (Ctrl+Z pour annuler).'); return; }
+    if(T3.wsel){ e.preventDefault(); wDelete(); return; }
+    const ps = selInfo(); if(ps.length){ e.preventDefault(); setType(ps, C.OUT); T3.sel = []; hint3(`${ps.length} morceau(x) mis hors enveloppe (Ctrl+Z pour annuler).`); return; } }
+  if(e.key === 'Escape'){ if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); renderWinPanel(); build3D(); } else if(T3.winMode) setWinMode(false); } });
 // position façade (fraction s du repère d'élévation, bas calé sous le faîte) d'un point 3D ; accroche aux autres fenêtres
 function wPosAt(fac, E, N, zb, w, exceptUid){
   const F = facFrame(fac); if(!F) return null; let t = E * F.r[0] + N * F.r[1], snapT = false, snapZ = false;
