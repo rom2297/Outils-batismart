@@ -416,7 +416,7 @@ body.noscroll{overflow:hidden}
           <p class="note">Murs, toits, fenêtres : <a href="https://www.geak.ch/media/typische_uwerte_lebensdauer_kennzahlen_heizwaerme_strom_weblinks.pdf" target="_blank" rel="noopener">GEAK — U-valeurs typiques</a> et <a href="https://enbau-online.ch/bautechnik-der-gebaeudehuelle/1-3-gebaeudehuelle-seit-1900/" target="_blank" rel="noopener">enbau-online — enveloppe depuis 1900</a> ; dès 1990, exigences par élément SIA 380/1 et MoPEC (valeurs courantes de l'époque). Contre terrain, non chauffé et sols : estimations (béton peu ou pas isolé avant 1980). Pour un calcul exact d'une paroi connue : <a href="../isobase/" target="_blank" rel="noopener">IsoBase CH › ThermoPlan</a>.</p></details>
       </div>
       <div class="tablewrap"><table class="edit" id="cb-lines"><thead><tr><th>Code</th><th>Élément</th><th>Type CECB</th><th>Orient.</th><th class="n">Net m²</th><th class="n" title="Valeur U [W/(m²K)]">U W/(m²K)</th><th class="n" title="Facteur de réduction b [–]">b</th></tr></thead><tbody></tbody></table></div>
-      <p class="note">b vaut 1 contre l'extérieur et 0 contre chauffé (pré-rempli, modifiable). Contre terrain et sur sous-sol non chauffé, b est <b>calculé</b> (EN ISO 13370) d'après la 3D : surface, périmètre exposé, profondeur sous le terrain et U de l'élément — survolez la case pour le détail ; une valeur saisie à la main remplace le calcul (videz-la pour y revenir). Contre locaux non chauffés et combles : à saisir. Un U saisi peut être recopié sur les autres éléments du même type. Pour changer un type : onglet 4.</p>
+      <p class="note">b vaut 1 contre l'extérieur et 0 contre chauffé (pré-rempli, modifiable). Contre non chauffé (sous-sol, combles, locaux annexes) : 0.8 d'office. Contre terrain, b est <b>calculé</b> (EN ISO 13370) d'après la 3D : surface, périmètre exposé, profondeur sous le terrain et U de l'élément — survolez la case pour le détail. Une valeur saisie à la main remplace le défaut ou le calcul (videz-la pour y revenir). Un U saisi peut être recopié sur les autres éléments du même type. Pour changer un type : onglet 4.</p>
       <h2 style="margin-top:18px">Fenêtres et portes</h2>
       <div class="tablewrap"><table class="edit" id="d3-thw"><thead><tr><th></th><th class="n">Surface m²</th><th class="n">U W/(m²K)</th><th class="n">g</th><th class="n">b</th><th class="n">Part vitrée</th><th class="n">Ombrage</th></tr></thead><tbody></tbody></table></div>
       <p class="note" id="cb-wins"></p>
@@ -4571,7 +4571,7 @@ function renderCecbTab(){
   $('cb-lines').tBodies[0].innerHTML = DC.lines.map((l) => { const t = thOf(l), dB = C.defB(l);
     return `<tr><td class="mono" style="white-space:nowrap">${l.code}</td><td>${esc(l.name)}</td><td class="note">${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.net)}</td>
       <td class="n"><input type="number" step="0.01" min="0" class="th${t.U == null ? ' need' : ''}${t.src ? ' cat' : ''}" data-lk="${esc(l.lk)}" data-k="U" value="${t.U ?? ''}" placeholder="U" aria-label="U ${l.code}"${t.src ? ` title="Catalogue : ${esc(t.src)}"` : ''}></td>
-      <td class="n"><input type="number" step="0.05" min="0" max="1" class="th${t.b == null && dB == null ? ' need' : ''}${t.bsrc ? ' cat' : ''}" data-lk="${esc(l.lk)}" data-k="b" value="${t.b ?? ''}" placeholder="${dB ?? (/terrain|non-chauff/i.test(l.type) && t.U == null ? 'après U' : 'b')}" aria-label="b ${l.code}"${t.bsrc ? ` title="Calculé : ${esc(t.bsrc)}"` : ''}></td></tr>`; }).join('');
+      <td class="n"><input type="number" step="0.05" min="0" max="1" class="th${t.b == null && dB == null ? ' need' : ''}${t.bsrc ? ' cat' : ''}" data-lk="${esc(l.lk)}" data-k="b" value="${t.b ?? ''}" placeholder="${dB ?? (/terrain|non-chauff/i.test(l.type) && t.U == null ? 'après U' : 'b')}" aria-label="b ${l.code}"${t.bsrc ? ` title="${esc(t.bsrc)}"` : ''}></td></tr>`; }).join('');
   const ws = DC.wins.filter((w) => !w.out && w.f.l > 0 && w.f.h > 0), A = { fen: 0, porte: 0 };
   ws.forEach((w) => { A[w.f.type === 'Porte' ? 'porte' : 'fen'] += (w.f.nombre || 1) * w.f.l * w.f.h; });
   renderThWin(A);
@@ -4651,23 +4651,24 @@ function bGeo(){                                 // surface, périmètre exposé
   return { A, P, tRef: res.tRef, zFloor: res.zFloor, zCut: res.zCut };
 }
 function bAutoOf(l, DC){
+  if(/non[- ]chauff/i.test(l.type)) return { b: 0.8, why: 'Valeur par défaut contre non chauffé : 0.8' };
   const t = thOf(l), U = t.U; if(!(U > 0)) return null; const g = bGeo(); if(!(g.P > 1) || !(g.A > 1)) return null;
   const ps = DC.pieces.filter((p) => l.keys.includes(p.key)), r2 = (x) => Math.round(Math.min(1, Math.max(0, x)) * 100) / 100;
   if(l.kind === 'sol' && /^Contre terrain/.test(l.type)){
     const zb = Math.min(...ps.map((p) => p.z).filter(isFinite)), z = Math.max(0, g.tRef - zb), f = isoFloor(U, g.A, g.P, z);
-    return { b: r2(f.U1 / U), why: `ISO 13370 dalle ${z > 0.05 ? `à ${fmt(z)} m sous le terrain` : 'sur terre-plein'} : B' = ${fmt(f.B)} m, U' = ${fmt(f.U1, 3)} → b = U'/U` };
+    return { b: r2(f.U1 / U), why: `Calculé : ISO 13370 dalle ${z > 0.05 ? `à ${fmt(z)} m sous le terrain` : 'sur terre-plein'} : B' = ${fmt(f.B)} m, U' = ${fmt(f.U1, 3)} → b = U'/U` };
   }
   if(l.kind === 'mur' && /^Contre terrain/.test(l.type)){
     const z = Math.max(...ps.map((p) => p.depth || 0)); if(!(z > 0.1)) return null;
     const f = isoFloor(U, g.A, g.P, z), Uw = isoWall(U, z, f.dt);
-    return { b: r2(Uw / U), why: `ISO 13370 mur enterré sur ${fmt(z)} m : U' = ${fmt(Uw, 3)} → b = U'/U` };
+    return { b: r2(Uw / U), why: `Calculé : ISO 13370 mur enterré sur ${fmt(z)} m : U' = ${fmt(Uw, 3)} → b = U'/U` };
   }
   if(l.kind === 'sol' && /^Contre non-chauffé \(Ssol/.test(l.type) && g.zCut != null && g.zFloor != null){
     const H = g.zCut - g.zFloor; if(!(H > 0.5)) return null;
     const z = Math.max(0, Math.min(H, g.tRef - g.zFloor)), h = H - z, up = (TH().uper || {}).sol, i = Math.max(0, uIdx(up || 'P3'));
     const Ub = UCAT.murTer.v[i], Ubf = UCAT.solTer.v[i], fl = isoFloor(Ubf, g.A, g.P, z), Ubw = z > 0.1 ? isoWall(Ub, z, fl.dt) : 0;
     const Hue = g.A * fl.U1 + z * g.P * Ubw + h * g.P * Ub + 0.33 * 0.3 * g.A * H, Hiu = g.A * U;
-    return { b: r2(Hue / (Hiu + Hue)), why: `ISO 13370 sous-sol non chauffé : ${fmt(z)} m enterré, ${fmt(h)} m hors terre, murs et dalle U ${fmt(Ub)} / ${fmt(Ubf)} (${UPER[i][1]}), n = 0.3 h⁻¹ → b = H_ue/(H_iu+H_ue)` };
+    return { b: r2(Hue / (Hiu + Hue)), why: `Calculé : ISO 13370 sous-sol non chauffé : ${fmt(z)} m enterré, ${fmt(h)} m hors terre, murs et dalle U ${fmt(Ub)} / ${fmt(Ubf)} (${UPER[i][1]}), n = 0.3 h⁻¹ → b = H_ue/(H_iu+H_ue)` };
   }
   return null;
 }
