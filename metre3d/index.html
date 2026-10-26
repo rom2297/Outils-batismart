@@ -413,7 +413,7 @@ body.noscroll{overflow:hidden}
         <div class="row" id="uc-sel" style="flex-wrap:wrap;gap:8px 14px"></div>
         <div class="actions" style="margin-top:8px;align-items:center"><button type="button" id="uc-fill">Remplir les U manquants</button><button type="button" class="ghost" id="uc-all">Tout remplacer</button><span class="note" id="uc-st"></span></div>
         <details style="margin-top:6px"><summary class="note">Voir le catalogue</summary><div class="tablewrap"><table class="edit" id="uc-tab"></table></div>
-          <p class="note">Murs, toits, fenêtres : <a href="https://www.geak.ch/media/typische_uwerte_lebensdauer_kennzahlen_heizwaerme_strom_weblinks.pdf" target="_blank" rel="noopener">GEAK — U-valeurs typiques</a> et <a href="https://enbau-online.ch/bautechnik-der-gebaeudehuelle/1-3-gebaeudehuelle-seit-1900/" target="_blank" rel="noopener">enbau-online — enveloppe depuis 1900</a> ; dès 1990, exigences par élément SIA 380/1 et MoPEC (valeurs courantes de l'époque). Contre terrain, non chauffé et sols : estimations (béton peu ou pas isolé avant 1980). Pour un calcul exact d'une paroi connue : <a href="../isobase/" target="_blank" rel="noopener">IsoBase CH › ThermoPlan</a>.</p></details>
+          <p class="note">Murs, toitures, fenêtres : catalogue Batismart par époque constructive (valeur = milieu de la fourchette). Contre terrain, non chauffé, sols, portes et g : estimations. Pour un calcul exact d'une paroi connue : <a href="../isobase/" target="_blank" rel="noopener">IsoBase CH › ThermoPlan</a>.</p></details>
       </div>
       <div class="tablewrap"><table class="edit" id="cb-lines"><thead><tr><th>Code</th><th>Élément</th><th>Type CECB</th><th>Orient.</th><th class="n">Net m²</th><th class="n" title="Valeur U [W/(m²K)]">U W/(m²K)</th><th class="n" title="Facteur de réduction b [–]">b</th></tr></thead><tbody></tbody></table></div>
       <p class="note">b vaut 1 contre l'extérieur et 0 contre chauffé (pré-rempli, modifiable). Contre non chauffé (sous-sol, combles, locaux annexes) : 0.8 d'office. Contre terrain, b est <b>calculé</b> (EN ISO 13370) d'après la 3D : surface, périmètre exposé, profondeur sous le terrain et U de l'élément — survolez la case pour le détail. Une valeur saisie à la main remplace le défaut ou le calcul (videz-la pour y revenir). Un U saisi peut être recopié sur les autres éléments du même type. Pour changer un type : onglet 4.</p>
@@ -4584,18 +4584,22 @@ function renderCecbTab(){
 /* Valeurs typiques W/(m²K). Murs, toits, fenêtres : GEAK « Typische U-Werte » et enbau-online.ch « Gebäudehülle seit 1900 » ;
    à partir de 1990 : exigences par élément SIA 380/1 (2001, 2009) et MoPEC/MuKEn 2008 et 2014, valeurs courantes de l'époque.
    Contre terrain / non chauffé / sols : estimation (dalle ou mur béton peu ou pas isolé avant 1980), pas de tableau publié. */
-const UPER = [['P0', 'avant 1919'], ['P1', '1919–1945'], ['P2', '1946–1960'], ['P3', '1961–1970'], ['P4', '1971–1980'], ['P5', '1981–1990'], ['P6', '1991–2000'], ['P7', '2001–2010'], ['P8', '2011–2015'], ['P9', 'après 2015']];
+const UPER = [['E0', 'avant 1950'], ['E1', '1950–1975'], ['E2', '1975–1989'], ['E3', '1990–2000'], ['E4', '2000–2015'], ['E5', 'dès 2016']];
+const UTYPO = ['Maçonnerie pleine (pierre, terre cuite), pas d\'isolant ; simple vitrage', 'Briques creuses (parfois double mur), béton armé ; double vitrage d\'époque',
+  'Premiers isolants (2–5 cm) ou briques thermiques ; double vitrage standard', 'Brique 15 cm + isolation périphérique 8–12 cm ; doubles vitrages performants',
+  'MoPEC 2008 / SIA, isolation 14–18 cm ; triples vitrages', 'MoPEC 2014, isolation 18–24 cm ou ossature bois'];
+// valeurs = milieu des fourchettes (≤ : la limite)
 const UCAT = {
-  murExt:  { lab: 'Mur contre extérieur',           v: [1.6, 1.2, 1.2, 1.0, 0.7, 0.5, 0.30, 0.25, 0.20, 0.17], src: 'GEAK, enbau' },
-  murTer:  { lab: 'Mur contre terrain / non chauffé', v: [1.5, 1.4, 1.3, 1.2, 1.0, 0.6, 0.45, 0.35, 0.28, 0.25], src: 'estimation, exigences SIA 380/1 dès 2001' },
-  toit:    { lab: 'Toit (pente, plat)',             v: [1.3, 1.1, 1.2, 0.9, 0.7, 0.4, 0.22, 0.20, 0.18, 0.17], src: 'GEAK, enbau' },
-  plafNC:  { lab: 'Plafond contre combles non chauffés', v: [1.3, 1.1, 1.2, 0.9, 0.7, 0.45, 0.30, 0.25, 0.20, 0.17], src: 'enbau, estimation' },
-  solTer:  { lab: 'Sol contre terrain',             v: [1.5, 1.4, 1.3, 1.2, 1.0, 0.6, 0.45, 0.35, 0.28, 0.25], src: 'estimation, exigences SIA 380/1 dès 2001' },
-  solNC:   { lab: 'Plancher sur sous-sol non chauffé', v: [1.3, 1.3, 1.3, 1.2, 0.9, 0.6, 0.45, 0.35, 0.28, 0.25], src: 'estimation, exigences SIA 380/1 dès 2001' },
-  solExt:  { lab: 'Plancher contre extérieur',      v: [1.6, 1.2, 1.2, 1.0, 0.7, 0.5, 0.30, 0.25, 0.20, 0.17], src: 'comme mur extérieur' },
-  fen:     { lab: 'Fenêtres Uw',                    v: [3.0, 3.0, 2.8, 2.8, 2.6, 2.0, 1.4, 1.3, 1.1, 1.0], src: 'GEAK, enbau' },
-  fenG:    { lab: 'Fenêtres g',                     v: [0.75, 0.75, 0.75, 0.75, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50], src: 'vitrage simple/double → 2-IV → 3-IV' },
-  porte:   { lab: 'Portes',                         v: [3.0, 3.0, 3.0, 2.8, 2.5, 2.0, 1.6, 1.3, 1.2, 1.2], src: 'estimation' } };
+  murExt:  { lab: 'Mur contre extérieur',              v: [1.25, 1.10, 0.55, 0.35, 0.22, 0.17], r: ['1.0–1.5', '1.0–1.2', '0.5–0.6', '0.3–0.4', '0.2–0.25', '≤ 0.17'], src: 'catalogue Batismart' },
+  murTer:  { lab: 'Mur contre terrain / non chauffé',  v: [1.40, 1.20, 0.80, 0.45, 0.30, 0.25], src: 'estimation' },
+  toit:    { lab: 'Toit (pente, plat)',                v: [1.50, 1.00, 0.45, 0.25, 0.18, 0.15], r: ['1.2–1.8', '0.8–1.2', '0.4–0.5', '0.2–0.3', '0.15–0.20', '≤ 0.15'], src: 'catalogue Batismart' },
+  plafNC:  { lab: 'Plafond contre combles non chauffés', v: [1.40, 1.00, 0.45, 0.28, 0.20, 0.17], src: 'estimation (proche toiture)' },
+  solTer:  { lab: 'Sol contre terrain',                v: [1.40, 1.20, 0.80, 0.45, 0.30, 0.25], src: 'estimation' },
+  solNC:   { lab: 'Plancher sur sous-sol non chauffé', v: [1.30, 1.20, 0.80, 0.45, 0.30, 0.25], src: 'estimation' },
+  solExt:  { lab: 'Plancher contre extérieur',         v: [1.25, 1.10, 0.55, 0.35, 0.22, 0.17], src: 'comme mur extérieur' },
+  fen:     { lab: 'Fenêtres Uw',                       v: [4.75, 3.25, 2.65, 1.65, 1.15, 1.00], r: ['4.5–5.0', '3.0–3.5', '2.5–2.8', '1.4–1.9', '1.0–1.3', '≤ 1.0'], src: 'catalogue Batismart' },
+  fenG:    { lab: 'Fenêtres g',                        v: [0.85, 0.75, 0.75, 0.65, 0.55, 0.50], src: 'simple → double → 2-IV → 3-IV' },
+  porte:   { lab: 'Portes',                            v: [3.0, 3.0, 2.5, 1.8, 1.3, 1.2], src: 'estimation' } };
 const UGRP = { mur: 'Murs', toit: 'Toits et plafonds', sol: 'Sols', fen: 'Fenêtres et portes' };
 function ucatOf(l){                              // ligne CECB → [groupe d'époque, élément du catalogue]
   const t = l.type;
@@ -4605,25 +4609,26 @@ function ucatOf(l){                              // ligne CECB → [groupe d'ép
 }
 function uperDefault(){                          // période RegBL (gbaup) ou année de construction
   const raw = (S.meta && S.meta.regbl && S.meta.regbl.raw) || {}, c = +raw.gbaup, y = +raw.gbauj;
-  const byCode = { 8011: 'P0', 8012: 'P1', 8013: 'P2', 8014: 'P3', 8015: 'P4', 8016: 'P5', 8017: 'P5', 8018: 'P6', 8019: 'P6', 8020: 'P7', 8021: 'P7', 8022: 'P8', 8023: 'P9' };
+  if(y > 1000){ const lim = [1950, 1975, 1990, 2000, 2016]; let i = 0; while(i < lim.length && y >= lim[i]) i++; return 'E' + i; }   // année connue : plus précis que la période
+  const byCode = { 8011: 'E0', 8012: 'E0', 8013: 'E1', 8014: 'E1', 8015: 'E2', 8016: 'E2', 8017: 'E2', 8018: 'E3', 8019: 'E3', 8020: 'E4', 8021: 'E4', 8022: 'E4', 8023: 'E5' };
   if(byCode[c]) return byCode[c];
-  if(y > 1000){ const lim = [1919, 1946, 1961, 1971, 1981, 1991, 2001, 2011, 2016]; let i = 0; while(i < lim.length && y >= lim[i]) i++; return 'P' + i; }
   return null;
 }
 const uIdx = (p) => UPER.findIndex((x) => x[0] === p);
 function renderUcat(){
   const t = TH(), up = t.uper = t.uper || {}, d = uperDefault();
-  Object.keys(UGRP).forEach((g) => { if(!up[g] && d) up[g] = d; });
+  Object.keys(UGRP).forEach((g) => { if(up[g] && uIdx(up[g]) < 0) delete up[g]; if(!up[g] && d) up[g] = d; });   // anciennes époques (v33–35) : réinitialisées
   $('uc-sel').innerHTML = Object.entries(UGRP).map(([g, lab]) => `<label>${lab}<select data-ug="${g}">${up[g] ? '' : '<option value="" selected>— époque —</option>'}${UPER.map(([k, l]) => `<option value="${k}"${up[g] === k ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`).join('');
-  $('uc-src').textContent = d ? `Époque proposée d'après le RegBL : ${UPER[uIdx(d)][1]}. Changez-la par groupe si les murs, le toit ou les fenêtres ont été rénovés.` : 'Période de construction inconnue (RegBL) : choisissez l\'époque.';
-  $('uc-tab').innerHTML = `<thead><tr><th>Élément</th>${UPER.map(([k, l]) => `<th class="n">${l}</th>`).join('')}<th>Source</th></tr></thead><tbody>${Object.entries(UCAT).map(([k, c]) => {
+  $('uc-src').textContent = d ? `Époque proposée d'après le RegBL : ${UPER[uIdx(d)][1]} (${esc(UTYPO[uIdx(d)])}). Changez-la par groupe si les murs, le toit ou les fenêtres ont été rénovés.` : 'Période de construction inconnue (RegBL) : choisissez l\'époque.';
+  $('uc-tab').innerHTML = `<thead><tr><th>Élément</th>${UPER.map(([k, l], i) => `<th class="n" title="${esc(UTYPO[i])}">${l}</th>`).join('')}<th>Source</th></tr></thead><tbody>${Object.entries(UCAT).map(([k, c]) => {
     const g = k.startsWith('fen') || k === 'porte' ? 'fen' : k.startsWith('mur') ? 'mur' : k.startsWith('sol') ? 'sol' : 'toit', cur = uIdx(up[g]);
-    return `<tr><td>${c.lab}</td>${c.v.map((v, i) => `<td class="n${i === cur ? ' uc-on' : ''}">${v.toFixed(2)}</td>`).join('')}<td class="note">${c.src}</td></tr>`; }).join('')}</tbody>`;
+    return `<tr><td>${c.lab}</td>${c.v.map((v, i) => `<td class="n${i === cur ? ' uc-on' : ''}"${c.r ? ` title="${c.r[i]}"` : ''}>${v.toFixed(2)}${c.r ? `<div class="note">${c.r[i]}</div>` : ''}</td>`).join('')}<td class="note">${c.src}</td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td class="note">Typologie</td>${UTYPO.map((t) => `<td class="note" style="font-size:11px">${esc(t)}</td>`).join('')}<td></td></tr></tfoot>`;
 }
 function ucatFill(all){
   const DC = S.res ? cecbData() : null; if(!DC) return; const t = TH(), up = t.uper || {}, L = t.line; let n = 0, miss = [];
   DC.lines.forEach((l) => { const [g, k] = ucatOf(l), i = uIdx(up[g]); if(i < 0){ miss.push(UGRP[g]); return; }
-    const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; o.U = UCAT[k].v[i]; o.src = `${UCAT[k].lab}, ${UPER[i][1]}`; n++; });
+    const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; o.U = UCAT[k].v[i]; o.src = `${UCAT[k].lab}, ${UPER[i][1]}${UCAT[k].r ? ' (' + UCAT[k].r[i] + ')' : ''} — ${UCAT[k].src}`; n++; });
   const i = uIdx(up.fen);
   if(i >= 0){ [['fen', 'fen', 'U'], ['fen', 'fenG', 'g'], ['porte', 'porte', 'U']].forEach(([w, k, q]) => { const o = t[w] = t[w] || {}; if(all || o[q] == null){ o[q] = UCAT[k].v[i]; (o.src = o.src || {})[q] = UPER[i][1]; n++; } }); }
   else miss.push(UGRP.fen);
@@ -4665,7 +4670,7 @@ function bAutoOf(l, DC){
   }
   if(l.kind === 'sol' && /^Contre non-chauffé \(Ssol/.test(l.type) && g.zCut != null && g.zFloor != null){
     const H = g.zCut - g.zFloor; if(!(H > 0.5)) return null;
-    const z = Math.max(0, Math.min(H, g.tRef - g.zFloor)), h = H - z, up = (TH().uper || {}).sol, i = Math.max(0, uIdx(up || 'P3'));
+    const z = Math.max(0, Math.min(H, g.tRef - g.zFloor)), h = H - z, up = (TH().uper || {}).sol, i = Math.max(0, uIdx(up || 'E1'));
     const Ub = UCAT.murTer.v[i], Ubf = UCAT.solTer.v[i], fl = isoFloor(Ubf, g.A, g.P, z), Ubw = z > 0.1 ? isoWall(Ub, z, fl.dt) : 0;
     const Hue = g.A * fl.U1 + z * g.P * Ubw + h * g.P * Ub + 0.33 * 0.3 * g.A * H, Hiu = g.A * U;
     return { b: r2(Hue / (Hiu + Hue)), why: `Calculé : ISO 13370 sous-sol non chauffé : ${fmt(z)} m enterré, ${fmt(h)} m hors terre, murs et dalle U ${fmt(Ub)} / ${fmt(Ubf)} (${UPER[i][1]}), n = 0.3 h⁻¹ → b = H_ue/(H_iu+H_ue)` };
