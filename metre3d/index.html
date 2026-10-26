@@ -413,7 +413,7 @@ body.noscroll{overflow:hidden}
         <p class="note" style="margin:0 0 6px"><b>Valeurs U selon l'année de construction (état existant)</b> — <span id="uc-src"></span></p>
         <div class="row" id="uc-sel" style="flex-wrap:wrap;gap:8px 14px"></div>
         <div class="actions" style="margin-top:8px;align-items:center"><button type="button" id="uc-fill">Remplir les U manquants</button><button type="button" class="ghost" id="uc-all">Tout remplacer</button><span class="note" id="uc-st"></span></div>
-        <details style="margin-top:6px"><summary class="note">Voir le catalogue (tous les 5 ans)</summary><div class="tablewrap"><table class="edit" id="uc-tab"></table></div>
+        <details style="margin-top:6px"><summary class="note">Voir le catalogue (tous les 5 ans)</summary><p class="note" id="uc-law"></p><div class="tablewrap"><table class="edit" id="uc-tab"></table></div>
           <p class="note">Valeur à l'année près, interpolée entre les périodes. Murs, toitures, fenêtres : moyenne du catalogue Batismart (époques constructives) et des valeurs <a href="https://www.geak.ch/media/typische_uwerte_lebensdauer_kennzahlen_heizwaerme_strom_weblinks.pdf" target="_blank" rel="noopener">GEAK</a> / <a href="https://enbau-online.ch/bautechnik-der-gebaeudehuelle/1-3-gebaeudehuelle-seit-1900/" target="_blank" rel="noopener">enbau-online</a> / exigences SIA 380/1 et MoPEC ; fourchette = les deux sources réunies. Contre terrain, non chauffé, sols, portes et g : estimations. Pour un calcul exact d'une paroi connue : <a href="../isobase/" target="_blank" rel="noopener">IsoBase CH › ThermoPlan</a>.</p></details>
       </div>
       <div class="tablewrap"><table class="edit" id="cb-lines"><thead><tr><th>Code</th><th>Élément</th><th>Type CECB</th><th>Orient.</th><th class="n">Net m²</th><th class="n" title="Valeur U [W/(m²K)]">U W/(m²K)</th><th class="n" title="Facteur de réduction b [–]">b</th></tr></thead><tbody></tbody></table></div>
@@ -4660,9 +4660,18 @@ function ucatOf(l){                              // ligne CECB → [groupe d'ép
 }
 /* Valeur à l'année près : interpolation linéaire entre les centres des périodes (1900, 1932, 1953, 1965, 1975, 1985, 1995, 2005, 2013, 2018) */
 const UCTR = [1900, 1932, 1953, 1965, 1975, 1985, 1995, 2005, 2013, 2018];
-function uAt(k, y){ const v = UCAT[k].v; if(!(y > 0)) return null; if(y <= UCTR[0]) return v[0]; if(y >= UCTR[9]) return v[9];
+function uAt0(k, y){ const v = UCAT[k].v; if(!(y > 0)) return null; if(y <= UCTR[0]) return v[0]; if(y >= UCTR[9]) return v[9];
   let i = 0; while(UCTR[i + 1] < y) i++; const r = (y - UCTR[i]) / (UCTR[i + 1] - UCTR[i]), x = v[i] + r * (v[i + 1] - v[i]);
   return k === 'fenG' ? Math.round(x * 100) / 100 : x >= 1 ? Math.round(x * 20) / 20 : Math.round(x * 100) / 100; }
+/* Exigences légales (neuf) : à partir de l'année d'entrée en vigueur, la valeur ne dépasse pas la limite à respecter.
+   aus = contre extérieur (ou < 2 m dans le terrain) ; unb = contre non chauffé / terrain > 2 m (toit-plafond, mur-sol) ; fen, por = fenêtres, portes. */
+const ULAW = [
+  { y: 2002, lab: 'SIA 380/1:2001 / MoPEC 2000', aus: 0.30, unbT: 0.40, unbM: 0.40, fen: 1.7, por: 2.0, note: 'valeurs usuelles de l\'époque' },
+  { y: 2010, lab: 'SIA 380/1:2009 / MoPEC 2008', aus: 0.20, unbT: 0.25, unbM: 0.28, fen: 1.3, por: 1.3, note: 'avec justificatif ponts thermiques' },
+  { y: 2017, lab: 'SIA 380/1:2016 / MoPEC 2014', aus: 0.17, unbT: 0.25, unbM: 0.25, fen: 1.0, por: 1.2, note: '' } ];
+const ULAWK = { murExt: 'aus', toit: 'aus', solExt: 'aus', murTer: 'unbM', solTer: 'unbM', solNC: 'unbM', plafNC: 'unbT', fen: 'fen', porte: 'por' };
+function uLaw(k, y){ const q = ULAWK[k]; if(!q) return null; let L = null; ULAW.forEach((x) => { if(y >= x.y) L = x; }); return L ? { v: L[q], L } : null; }
+function uAt(k, y){ const x = uAt0(k, y), l = x != null && uLaw(k, y); return l && l.v < x ? l.v : x; }
 const perOf = (y) => { const lim = [1919, 1946, 1961, 1971, 1981, 1991, 2001, 2011, 2016]; let i = 0; while(i < lim.length && y >= lim[i]) i++; return i; };
 function uyearDefault(){                       // année de construction RegBL, sinon milieu de la période RegBL
   const raw = (S.meta && S.meta.regbl && S.meta.regbl.raw) || {}, c = +raw.gbaup, y = +raw.gbauj;
@@ -4678,14 +4687,16 @@ function renderUcat(){
   $('uc-src').textContent = d ? `Année proposée : ${d.y} (${d.src}). Mettez l'année de rénovation par groupe si les murs, le toit ou les fenêtres ont été refaits.` : 'Année de construction inconnue (RegBL) : saisissez-la.';
   const yrs = []; for(let y = 1900; y <= 2020; y += 5) yrs.push(y);
   const ks = ['murExt', 'murTer', 'toit', 'plafNC', 'solTer', 'solNC', 'fen', 'fenG', 'porte'], on = new Set(Object.values(uy).filter((y) => y > 0).map((y) => Math.round(y / 5) * 5));
+  $('uc-law').innerHTML = `<b>Limites légales prises en compte</b> (valeur plafonnée dès l'entrée en vigueur, <sup>L</sup> dans le tableau) : ${ULAW.map((x) => `dès ${x.y} ${esc(x.lab)} — opaque ext. ${fmt(x.aus)}, non chauffé/terrain ${fmt(x.unbT)}/${fmt(x.unbM)}, fenêtres ${fmt(x.fen, 1)}${x.note ? ` (${esc(x.note)})` : ''}`).join(' ; ')}.`;
   $('uc-tab').innerHTML = `<thead><tr><th>Année</th>${ks.map((k) => `<th class="n" title="${esc(UCAT[k].src)}">${UCAT[k].lab}</th>`).join('')}<th>Typologie</th></tr></thead><tbody>${yrs.map((y) =>
-    `<tr${on.has(y) ? ' class="uc-row"' : ''}><td class="mono">${y}</td>${ks.map((k) => `<td class="n">${uAt(k, y).toFixed(2)}</td>`).join('')}<td class="note" style="font-size:11px">${esc(UTYPO[perOf(y)])}</td></tr>`).join('')}</tbody>`;
+    `<tr${on.has(y) ? ' class="uc-row"' : ''}><td class="mono">${y}</td>${ks.map((k) => { const l = uLaw(k, y), c = l && l.v < uAt0(k, y); return `<td class="n"${c ? ` title="limite ${esc(l.L.lab)}"` : ''}>${uAt(k, y).toFixed(2)}${c ? '<sup>L</sup>' : ''}</td>`; }).join('')}<td class="note" style="font-size:11px">${esc(UTYPO[perOf(y)])}</td></tr>`).join('')}</tbody>`;
 }
 function ucatFill(all){
   const DC = S.res ? cecbData() : null; if(!DC) return; const t = TH(), uy = t.uyear || {}, L = t.line; let n = 0, miss = [];
   DC.lines.forEach((l) => { const [g, k] = ucatOf(l), y = uy[g]; if(!(y > 0)){ miss.push(UGRP[g]); return; }
     const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; o.U = uAt(k, y); const p = perOf(y);
-    o.src = `${UCAT[k].lab}, année ${y} (période ${UPER[p][1]}${UCAT[k].r ? ', fourchette ' + UCAT[k].r[p] : ''}) — ${UCAT[k].src}`; n++; });
+    const lw = uLaw(k, y), capped = lw && lw.v < uAt0(k, y);
+    o.src = `${UCAT[k].lab}, année ${y} (période ${UPER[p][1]}${UCAT[k].r ? ', fourchette ' + UCAT[k].r[p] : ''}) — ${UCAT[k].src}${capped ? ` — limité à ${fmt(lw.v)} : ${lw.L.lab} (en vigueur dès ${lw.L.y})` : ''}`; n++; });
   const y = uy.fen;
   if(y > 0){ [['fen', 'fen', 'U'], ['fen', 'fenG', 'g'], ['porte', 'porte', 'U']].forEach(([w, k, q]) => { const o = t[w] = t[w] || {}; if(all || o[q] == null){ o[q] = uAt(k, y); (o.src = o.src || {})[q] = 'année ' + y; n++; } }); }
   else miss.push(UGRP.fen);
