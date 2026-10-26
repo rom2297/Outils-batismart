@@ -1417,12 +1417,29 @@ body.noscroll{overflow:hidden}
   /* coupes verticales : points (E, N) cliqués sur une façade → abscisses s par arête de l'emprise (Map arête → [s triés]) */
   /* clé des noms : mur courant et pignon d'une même façade partagent le nom (la limite à l'égout est interne au calcul) */
   const nameKey = (k) => k.replace(/^(M\|\d+\|)(mur|pignon)\|/, '$1w|');
+  function edgeAt(res, E, N) {                 // point (E, N) → arête de l'emprise la plus proche (à 0.6 m) et abscisse s
+    let bi = -1, bd = 0.6, bs = 0; res.edges.forEach((e, i) => { const dx = E - e.p1[0], dy = N - e.p1[1], s = dx * e.u[0] + dy * e.u[1], d = Math.abs(dx * e.n[0] + dy * e.n[1]);
+      if (s > 0.1 && s < e.L - 0.1 && d < bd) { bd = d; bi = i; bs = s; } });
+    return bi < 0 ? null : { i: bi, s: bs };
+  }
   function vcutsOf(res, extra) {
     const m = new Map(); ((extra && extra.vcuts) || []).forEach((c) => { if (!c || !isFinite(c.E) || !isFinite(c.N)) return;
-      let bi = -1, bd = 0.6, bs = 0; res.edges.forEach((e, i) => { const dx = c.E - e.p1[0], dy = c.N - e.p1[1], s = dx * e.u[0] + dy * e.u[1], d = Math.abs(dx * e.n[0] + dy * e.n[1]);
-        if (s > 0.1 && s < e.L - 0.1 && d < bd) { bd = d; bi = i; bs = s; } });
-      if (bi < 0) return; const a = m.get(bi) || []; if (!a.some((x) => Math.abs(x - bs) < 0.05)) a.push(bs); m.set(bi, a); });
+      const p = edgeAt(res, c.E, c.N); if (!p) return; const a = m.get(p.i) || []; if (!a.some((x) => Math.abs(x - p.s) < 0.05)) a.push(p.s); m.set(p.i, a); });
     m.forEach((a) => a.sort((x, y) => x - y)); return m;
+  }
+  /* Grille de découpe d'une façade : bandes verticales (vs) × niveaux (coupes sous la base du pignon), et segments de ligne supprimés.
+     Un segment de coupe verticale supprimé (vcut.off = [cote relative]) réunit les deux cases voisines de ce niveau ;
+     un segment de coupe horizontale supprimé (cut.off = [{E, N}]) réunit les deux cases voisines de cette bande. */
+  function edgeGrid(res, extra, i) {
+    const e = res.edges[i], zr = res.zRefB != null ? res.zRefB : res.tRef;
+    const cuts = (extra.cuts || []).filter((x) => x && isFinite(x.z)).map((x) => ({ z: zr + x.z, off: x.off || [] })).sort((a, c) => a.z - c.z);
+    const zG = gableBase(e), cutsE = cuts.filter((x) => !(x.z > zG - 0.05)), vs = vcutsOf(res, extra).get(i) || [];
+    const zoneOf = (zm) => { let k = 0; cuts.forEach((x, j) => { if (zm >= x.z) k = j + 1; }); return k; };
+    const K = cutsE.length + 1, J = vs.length + 1, vOff = new Set(), hOff = new Set();
+    (extra.vcuts || []).forEach((c) => { if (!c || !c.off || !c.off.length) return; const p = edgeAt(res, c.E, c.N); if (!p || p.i !== i) return;
+      const b = vs.findIndex((x) => Math.abs(x - p.s) < 0.06); if (b < 0) return; c.off.forEach((z) => { if (isFinite(z)) vOff.add(`${Math.min(K - 1, zoneOf(zr + z))}|${b}`); }); });
+    cutsE.forEach((c, ci) => c.off.forEach((q) => { const p = q && edgeAt(res, q.E, q.N); if (!p || p.i !== i) return; hOff.add(`${ci}|${vs.filter((x) => x < p.s).length}`); }));
+    return { e, zr, cuts, cutsE, zG, vs, K, J, vOff, hOff, zoneOf };
   }
   /* base du pignon d'une façade : point bas des rampants du profil supérieur du mur (pente continue). Infinity sans pignon */
   function gableBase(e) {
@@ -1442,7 +1459,7 @@ body.noscroll{overflow:hidden}
     const zEave = pitched.length ? Math.min(...pitched.map((p) => p.zmin)) : null;
     const zCut = res.zCut, big = 1e4, combNC = extra.combles === 'non chauffés', ss = extra.soussol;
     // découpe par niveaux (étages d'isolation différente) : cotes saisies, même référence que la base de l'enveloppe
-    const zr = res.zRefB != null ? res.zRefB : res.tRef, cuts = (extra.cuts || []).filter((x) => x && isFinite(x.z)).map((x) => ({ z: zr + x.z, name: x.name || '' })).sort((a, c) => a.z - c.z);
+    const zr = res.zRefB != null ? res.zRefB : res.tRef, cuts = (extra.cuts || []).filter((x) => x && isFinite(x.z)).map((x) => ({ z: zr + x.z, name: x.name || '', off: x.off || [] })).sort((a, c) => a.z - c.z);
     const zoneOf = (zm) => { let k = 0; cuts.forEach((x, j) => { if (zm >= x.z) k = j + 1; }); return k; };
     const zoneName = (k) => (k === 0 ? (extra.cutBase || 'partie basse') : cuts[k - 1].name || `niveau ${k + 1}`);
     res.edges.forEach((e, i) => {
@@ -1459,19 +1476,33 @@ body.noscroll{overflow:hidden}
       bands.push(['mur', c0, Math.max(c0, c1)]);
       if (zEave != null && zEave > c0) bands.push(['pignon', zEave, big]);
       // pignon (au-dessus de la base du pignon de CETTE façade) : toujours d'un seul morceau, ni coupe horizontale ni verticale
-      const zG = gableBase(e), cutsE = cuts.filter((x) => !(x.z > zG - 0.05));
-      const sub = []; bands.forEach(([band, z0, z1]) => { if (!cuts.length || band === 'bas') { sub.push([band, z0, z1, null]); return; }
-        const zs = [z0, ...cutsE.map((x) => x.z).filter((z) => z > z0 + 0.01 && z < z1 - 0.01), z1];
-        for (let j = 0; j < zs.length - 1; j++) sub.push([band, zs[j], zs[j + 1], zoneOf(Math.max(zs[j], -1e3) + 0.01)]); });
-      // coupes verticales (cette façade seulement) : bandes en s sous la base du pignon
-      const vs = vc.get(i) || [], incR = e.u[0] * -e.n[1] + e.u[1] * e.n[0] > 0;   // vue de l'extérieur : s croît vers la droite ?
+      const GR = edgeGrid(res, extra, i), zG = GR.zG, cutsE = GR.cutsE, vs = GR.vs, incR = e.u[0] * -e.n[1] + e.u[1] * e.n[0] > 0;   // vue de l'extérieur : s croît vers la droite ?
       // nom d'une bande verticale : saisi (V|arête|vj) ou « partie k » numérotée de gauche à droite vue de l'extérieur
       const vName = (vj) => { const u = names[`V|${i}|v${vj}`]; return u && String(u).trim() ? [String(u).trim(), true] : [`partie ${incR ? vj + 1 : vs.length + 1 - vj}`, false]; };
-      sub.forEach(([band, z0, z1, zone]) => {
-        if (z1 - z0 < 0.01) return; const bnd = [-1, ...vs, e.L + 1], zg = Math.max(z0, Math.min(z1, zG)), strips = [];
-        if (vs.length && zg > z0 + 0.01) bnd.slice(0, -1).forEach((a, j) => strips.push([a, bnd[j + 1], z0, zg, j]));
-        if (!vs.length) strips.push([-1, e.L + 1, z0, z1, null]); else if (zg < z1 - 0.01) strips.push([-1, e.L + 1, zg, z1, null]);
-        strips.forEach(([s0, s1, za, zb, vj]) => { const rect = [[[s0, za], [s1, za], [s1, zb], [s0, zb], [s0, za]]];
+      const bnd = [-1, ...vs, e.L + 1], entries = [], anyOff = GR.vOff.size + GR.hOff.size > 0;
+      const oldBand = (band, z0, z1) => {           // découpe en grille : niveaux × bandes verticales
+        const subs = []; if (!cuts.length || band === 'bas') subs.push([z0, z1, null]);
+        else { const zs = [z0, ...cutsE.map((x) => x.z).filter((z) => z > z0 + 0.01 && z < z1 - 0.01), z1]; for (let j = 0; j < zs.length - 1; j++) subs.push([zs[j], zs[j + 1], zoneOf(Math.max(zs[j], -1e3) + 0.01)]); }
+        subs.forEach(([a, c, zone]) => { if (c - a < 0.01) return; const zg = Math.max(a, Math.min(c, zG));
+          if (vs.length && zg > a + 0.01) bnd.slice(0, -1).forEach((s0, j) => entries.push({ band, zone, vj: j, rects: [[s0, bnd[j + 1], a, zg]] }));
+          if (!vs.length) entries.push({ band, zone, vj: null, rects: [[-1, e.L + 1, a, c]] }); else if (zg < c - 0.01) entries.push({ band, zone, vj: null, rects: [[-1, e.L + 1, zg, c]] }); });
+      };
+      bands.forEach(([band, z0, z1]) => {
+        if (!anyOff || band === 'bas') { oldBand(band, z0, z1); return; }
+        // segments supprimés : cases réunies (union-find, représentant = case la plus basse puis la plus à gauche en s)
+        const K = GR.K, J = GR.J, Zb = [-big, ...cutsE.map((x) => x.z), big], par = [...Array(K * J).keys()];
+        const fnd = (x) => (par[x] === x ? x : (par[x] = fnd(par[x]))), uni = (p, q) => { p = fnd(p); q = fnd(q); if (p !== q) par[Math.max(p, q)] = Math.min(p, q); };
+        GR.vOff.forEach((x) => { const [k, b] = x.split('|').map(Number); uni(k * J + b, k * J + b + 1); });
+        GR.hOff.forEach((x) => { const [c, j] = x.split('|').map(Number); uni(c * J + j, (c + 1) * J + j); });
+        const grp = new Map(); for (let k = 0; k < K; k++) for (let j = 0; j < J; j++) { const r = fnd(k * J + j); (grp.get(r) || grp.set(r, []).get(r)).push([k, j]); }
+        const top = vs.length ? zG : Infinity;
+        grp.forEach((cells, r) => { const rects = cells.map(([k, j]) => [bnd[j], bnd[j + 1], Math.max(Zb[k], z0), Math.min(Zb[k + 1], z1, top)]).filter((q) => q[3] > q[2] + 0.01);
+          if (rects.length) entries.push({ band, zone: cuts.length ? Math.floor(r / J) : null, vj: vs.length ? r % J : null, rects, vAll: new Set(cells.map((c) => c[1])).size === J }); });
+        if (vs.length && zG < z1 - 0.01) entries.push({ band, zone: cuts.length ? zoneOf(Math.max(z0 > -1e3 ? z0 : -1e3, cutsE.length ? cutsE[cutsE.length - 1].z : -1e3) + 0.01) : null, vj: null, rects: [[-1, e.L + 1, Math.max(z0, zG), z1]] });
+      });
+      entries.forEach(({ band, zone, vj, rects, vAll }) => {
+        const R = rects.map(([s0, s1, za, zb]) => [[[s0, za], [s1, za], [s1, zb], [s0, zb], [s0, za]]]), rect = R.length === 1 ? R[0] : PC.union(...R);
+        {
         [['hs', above], ['ent', below]].forEach(([ter, reg]) => {
           const poly = PC.intersection(U, rect, [reg]), A = mpArea(poly); if (A < (vj != null || zone != null ? 0.005 : 0.05)) return;
           let depth = 0; if (ter === 'ent') poly.forEach((pg) => pg[0].forEach(([s, z]) => { depth = Math.max(depth, interpT(t, s) - z); }));
@@ -1480,11 +1511,11 @@ body.noscroll{overflow:hidden}
             : e.split ? (band === 'pignon' && combNC ? OUT : 'Contre chauffé')
             : band === 'pignon' ? (combNC ? OUT : 'Mur extérieur') : (ter === 'hs' ? 'Mur extérieur' : terT);
           const key = `M|${i}|${band}|${ter}` + (zone != null ? `|z${zone}` : '') + (vj != null ? `|v${vj}` : '');
-          const zz = zone != null ? zoneName(zone) : null, [vn, vU] = vj != null ? vName(vj) : [null, false];
+          const zz = zone != null ? zoneName(zone) : null, [vn, vU] = vj != null && !vAll ? vName(vj) : [null, false];
           const zn = [zz, vn].filter(Boolean).join(' – ') || null, name = nm(key, zn);
           P.push({ key, kind: 'mur', edge: i, band, ter, orientation: e.orientation, poly, area: A, depth, def, type: adj[key] || def, zone: name, custom: !!(name && (name !== zn || vU)), vpart: vj,
             label: `Mur ${e.orientation} n°${i + 1}${name ? ' — ' + name : ''}${ter === 'ent' ? ' — enterré (prof. max ' + fmt(depth) + ' m)' : ' — hors-sol'}${BAND_LAB[band] ? ' — ' + BAND_LAB[band] : ''}` });
-        }); });
+        }); }
       });
     });
     (res.roofWalls || []).forEach((w, k) => {
@@ -1544,7 +1575,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { vcutsOf, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4449,20 +4480,26 @@ function drawCuts(g, DC, P, res){
   T3.cutSegs = []; const acc = new THREE.Color('#d9480f'), mat = new THREE.LineBasicMaterial({ color: acc, depthTest: false, transparent: true });
   const rng = new Map(); DC.pieces.forEach((p) => { if(p.kind !== 'mur' || !(p.edge >= 0)) return; const r = rng.get(p.edge) || [Infinity, -Infinity];
     p.poly.forEach((pg) => pg[0].forEach(([, z]) => { r[0] = Math.min(r[0], z); r[1] = Math.max(r[1], z); })); rng.set(p.edge, r); });
-  rng.forEach((r, i) => { r[1] = Math.min(r[1], C.gableBase(res.edges[i])); });   // pas de coupe dans le pignon
   const at = (e, s, z) => new THREE.Vector3(...P([e.p1[0] + e.u[0] * s + e.n[0] * 0.05, e.p1[1] + e.u[1] * s + e.n[1] * 0.05, z], 0));
-  const zr = res.zRefB != null ? res.zRefB : res.tRef;
-  (S.extra.cuts || []).forEach((c, ci) => { const z = zr + c.z, grp = new THREE.Group();
-    res.edges.forEach((e, i) => { const r = rng.get(i); if(!r || z <= r[0] || z >= r[1]) return; const A = at(e, 0, z), B = at(e, e.L, z);
-      grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B]), mat)); T3.cutSegs.push({ t: 'h', ci, A, B, e, obj: grp }); });
-    grp.renderOrder = 5; g.add(grp); });
-  (S.extra.vcuts || []).forEach((c, vi) => { const f = vcInfo(c); if(!f) return; const r = rng.get(f.edge); if(!r) return;
-    const A = at(f.e, f.s, r[0]), B = at(f.e, f.s, r[1]), l = new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B]), mat); l.renderOrder = 5; g.add(l);
-    T3.cutSegs.push({ t: 'v', vi, f, A, B, e: f.e, obj: l }); });
-  // coupe sélectionnée : tube bleu (Suppr pour la supprimer)
+  const zr = res.zRefB != null ? res.zRefB : res.tRef, grpH = [], grpV = [];
+  const gH = (ci) => grpH[ci] || (grpH[ci] = (() => { const q = new THREE.Group(); q.renderOrder = 5; g.add(q); return q; })());
+  const gV = (vi) => grpV[vi] || (grpV[vi] = (() => { const q = new THREE.Group(); q.renderOrder = 5; g.add(q); return q; })());
+  const line = (grp, A, B) => grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B]), mat));
+  const vByEdge = new Map(); (S.extra.vcuts || []).forEach((c, vi) => { const f = vcInfo(c); if(f) (vByEdge.get(f.edge) || vByEdge.set(f.edge, []).get(f.edge)).push([vi, f]); });
+  // une ligne de coupe = des segments entre les croisements : chaque segment se sélectionne et se supprime seul
+  res.edges.forEach((e, i) => { const r = rng.get(i); if(!r) return; const GR = C.edgeGrid(res, S.extra, i), r1 = Math.min(r[1], GR.zG);
+    const bnd = [0, ...GR.vs, e.L], Zb = [-Infinity, ...GR.cutsE.map((x) => x.z), Infinity];
+    GR.cutsE.forEach((c, ci) => { if(c.z <= r[0] || c.z >= r1) return;
+      for(let j = 0; j < GR.J; j++){ if(GR.hOff.has(`${ci}|${j}`)) continue; const A = at(e, bnd[j], c.z), B = at(e, bnd[j + 1], c.z); line(gH(ci), A, B);
+        T3.cutSegs.push({ t: 'h', ci, i, j, A, B, e, obj: gH(ci), sm: (bnd[j] + bnd[j + 1]) / 2 }); } });
+    (vByEdge.get(i) || []).forEach(([vi, f]) => { const b = GR.vs.findIndex((x) => Math.abs(x - f.s) < 0.06); if(b < 0) return;
+      for(let k = 0; k < GR.K; k++){ if(GR.vOff.has(`${k}|${b}`)) continue; const za = Math.max(Zb[k], r[0]), zb = Math.min(Zb[k + 1], r1); if(zb - za < 0.05) continue;
+        const A = at(e, f.s, za), B = at(e, f.s, zb); line(gV(vi), A, B); T3.cutSegs.push({ t: 'v', vi, f, k, i, A, B, e, obj: gV(vi), zm: (za + zb) / 2 - zr }); } });
+  });
+  // segment sélectionné : tube bleu (Suppr : ce segment ; Maj + Suppr : toute la ligne)
   const cs = T3.cutSel; if(cs){ const tm = new THREE.MeshBasicMaterial({ color: new THREE.Color('#1c7ed6'), depthTest: false, transparent: true, opacity: 0.9 });
-    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'h' ? sg.ci === cs.i : sg.vi === cs.i)).forEach((sg) => {
-      const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(sg.A, sg.B), 2, 0.07, 6, false), tm); m.renderOrder = 6; sg.obj.add ? sg.obj.add(m) : g.add(m); }); }
+    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'h' ? sg.ci === cs.i && sg.i === cs.edge && sg.j === cs.j : sg.vi === cs.i && sg.k === cs.k)).forEach((sg) => {
+      const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(sg.A, sg.B), 2, 0.07, 6, false), tm); m.renderOrder = 6; sg.obj.add(m); }); }
 }
 // glisser une coupe (tous les modes) : la ligne rouge la plus proche du pointeur, à moins de 8 px
 function ray3(ev){ const r = T3.r.domElement.getBoundingClientRect(), v = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
@@ -4485,9 +4522,9 @@ function dragStart(ev){
   if(ev.button !== 0) return false; const sg = segNear(ev); if(!sg) return false;
   const e = sg.e, n = new THREE.Vector3(e.n[0], 0, -e.n[1]), plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, sg.A);
   if(sg.t === 'h'){ const cs = S.extra.cuts, ci = sg.ci;
-    T3.drag = { t: 'h', ci, z0: cs[ci].z, z: cs[ci].z, plane, zr: S.res.zRefB != null ? S.res.zRefB : S.res.tRef, obj: sg.obj,
+    T3.drag = { sg, t: 'h', ci, z0: cs[ci].z, z: cs[ci].z, plane, zr: S.res.zRefB != null ? S.res.zRefB : S.res.tRef, obj: sg.obj,
       lo: ci > 0 ? cs[ci - 1].z + 0.1 : -Infinity, hi: ci < cs.length - 1 ? cs[ci + 1].z - 0.1 : Infinity }; }
-  else { const [lo, hi] = vLimits(sg.f); T3.drag = { t: 'v', vi: sg.vi, f: sg.f, s0: sg.f.s, s: sg.f.s, plane, obj: sg.obj, lo, hi, jambs: jambsOf(e) }; }
+  else { const [lo, hi] = vLimits(sg.f); T3.drag = { sg, t: 'v', vi: sg.vi, f: sg.f, s0: sg.f.s, s: sg.f.s, plane, obj: sg.obj, lo, hi, jambs: jambsOf(e) }; }
   T3.ctl.enabled = false; T3.r.domElement.style.cursor = sg.t === 'h' ? 'ns-resize' : 'ew-resize'; return true;
 }
 function dragMove(ev){
@@ -4510,8 +4547,9 @@ function dragEnd(){ const d = T3 && T3.drag; if(!d) return false; T3.drag = null
   if(d.t === 'h' && Math.abs(d.z - d.z0) >= 0.01){ S.extra.cuts[d.ci].z = d.z; T3.sel = []; complementsChanged(); }
   if(d.t === 'v' && Math.abs(d.s - d.s0) >= 0.01) moveVCut(d.vi, d.f, d.s);
   if((d.t === 'h' && Math.abs(d.z - d.z0) < 0.01) || (d.t === 'v' && Math.abs(d.s - d.s0) < 0.01)){   // simple clic : sélection
-    T3.cutSel = { t: d.t, i: d.t === 'h' ? d.ci : d.vi }; T3.sel = []; T3.wsel = null; build3D();
-    const c = d.t === 'h' ? S.extra.cuts[d.ci] : null; hint3(`${c ? `Coupe horizontale « ${c.name || 'niveau ' + (d.ci + 2)} »` : 'Coupe verticale ' + d.f.e.orientation} sélectionnée — Suppr pour la supprimer, Échap pour désélectionner`); }
+    const sg = d.sg; T3.cutSel = { t: d.t, i: d.t === 'h' ? d.ci : d.vi, edge: sg.i, j: sg.j, k: sg.k }; T3.sel = []; T3.wsel = null; build3D();
+    const n = T3.cutSegs.filter((x) => x.t === d.t && (d.t === 'h' ? x.ci === d.ci : x.vi === d.vi)).length, c = d.t === 'h' ? S.extra.cuts[d.ci] : null;
+    hint3(`${c ? `Coupe horizontale « ${c.name || 'niveau ' + (d.ci + 2)} »` : 'Coupe verticale ' + d.f.e.orientation} : ${n > 1 ? `segment sélectionné — Suppr : supprimer ce segment (les deux cases se réunissent) · Maj + Suppr : toute la ligne` : 'sélectionnée — Suppr pour la supprimer'} · Échap : désélectionner`); }
   return true; }
 function setType(ps, t){
   S.extra.adj = S.extra.adj || {};
@@ -4799,7 +4837,13 @@ function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenet
 // Suppr dans la vue 3D : coupe sélectionnée, fenêtre sélectionnée, sinon éléments sélectionnés → hors enveloppe
 document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
   if(e.key === 'Delete' || e.key === 'Backspace'){
-    if(T3.cutSel){ e.preventDefault(); const c = T3.cutSel; T3.cutSel = null; if(c.t === 'h') delHCut(c.i); else delVCut(c.i); hint3('Coupe supprimée (Ctrl+Z pour annuler).'); return; }
+    if(T3.cutSel){ e.preventDefault(); const c = T3.cutSel; T3.cutSel = null;
+      const segs = T3.cutSegs.filter((x) => x.t === c.t && (c.t === 'h' ? x.ci === c.i : x.vi === c.i)), sg = segs.find((x) => c.t === 'h' ? x.i === c.edge && x.j === c.j : x.k === c.k);
+      if(segs.length > 1 && sg && !e.shiftKey){                  // un seul segment : les deux cases voisines se réunissent
+        if(c.t === 'h'){ const q = S.extra.cuts[c.i], E = sg.e.p1[0] + sg.e.u[0] * sg.sm, N = sg.e.p1[1] + sg.e.u[1] * sg.sm; (q.off = q.off || []).push({ E: +E.toFixed(3), N: +N.toFixed(3) }); }
+        else { const q = S.extra.vcuts[c.i]; (q.off = q.off || []).push(+sg.zm.toFixed(3)); }
+        T3.sel = []; complementsChanged(); hint3('Segment supprimé : les deux parties sont réunies (Ctrl+Z pour annuler).'); return; }
+      if(c.t === 'h') delHCut(c.i); else delVCut(c.i); hint3('Coupe supprimée (Ctrl+Z pour annuler).'); return; }
     if(T3.wsel){ e.preventDefault(); wDelete(); return; }
     const ps = selInfo(); if(ps.length){ e.preventDefault(); setType(ps, C.OUT); T3.sel = []; hint3(`${ps.length} morceau(x) mis hors enveloppe (Ctrl+Z pour annuler).`); return; } }
   if(e.key === 'Escape'){ if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); renderWinPanel(); build3D(); } else if(T3.winMode) setWinMode(false); } });
