@@ -314,6 +314,7 @@ const DEFAULT_SETTINGS = {
   id: 'settings',
   societe: 'batismart SA', adresse: 'Rue des Pêcheurs 8b', npa: '1400', localite: 'Yverdon-les-Bains', tel: '+41 24 552 02 90', email: 'info@batismart.ch', web: 'www.batismart.ch',
   taux: 135, tauxThermo: 145, tva: 8.1, km: 0.7, roy: 80, royp: 190, pubMaj: 30,
+  serveur: { pattern: '{dossier}', sousDossiers: '1. Doc reçus\n2. E-mails\n3. Offre\n4. Photos\n{prestation}', dossierOffre: '3. Offre', racine: '' },
   seuilZone: 30, subvInd: 1000, subvAutre: 1500, subvComPct: 50, subvComMax: 1000,
   rabaisChauffren: 5, rabaisExistant: 10, rabaisLesosai: 40,
   departs: [{ id: 'bureau', nom: 'Bureau batismart', adresse: 'Rue des Pêcheurs 8b, 1400 Yverdon-les-Bains', lat: 46.7785, lon: 6.6409 },
@@ -346,6 +347,7 @@ const DEFAULT_BAREMES = {
     { cat: 'Habitat collectif', log: '> 10', sre: '> 1250', logMin: 11, sreMin: 1251, bleue: 5290, verte: 5563 },
   ],
   thermoCecbPlus: { villa: 260, immeuble: 520 },
+  cecbMaj: { ind: 270, coll: 405, hors: 540 }, // forfait HT mise à jour CECB (hors frais de publication)
   majCecbH: 5,
   en: {
     classes: [0, 251, 1001, 1501, 2001],
@@ -461,10 +463,14 @@ async function loadAll() {
   S.settings = Object.assign(clone(DEFAULT_SETTINGS), kv.find((x) => x.id === 'settings') || {});
   S.baremes = Object.assign(clone(DEFAULT_BAREMES), kv.find((x) => x.id === 'baremes') || {});
   const oldFH = JSON.stringify({ 'EN-VD-4': 1, 'EN-VD-5': 1, 'EN-VD-10': 0.5, 'EN-VD-11': 0.5, 'EN-VD-15': 2, 'EN-6': 1, 'EN-7': 1, 'EN-8': 1, 'EN-9': 1, 'EN-12': 1, 'EN-13': 1 });
+  if (!S.baremes.cecbMaj) S.baremes.cecbMaj = clone(DEFAULT_BAREMES.cecbMaj);
   if (!S.baremes.complexite) S.baremes.complexite = clone(DEFAULT_BAREMES.complexite);
   if (!S.baremes.en.formsH || JSON.stringify(S.baremes.en.formsH) === oldFH) S.baremes.en.formsH = clone(DEFAULT_BAREMES.en.formsH);
   if (!a.length && !kv.find((x) => x.id === 'seeded')) { S.articles = clone(DEFAULT_ARTICLES); for (const x of S.articles) await DB.put('articles', x); await DB.put('kv', { id: 'seeded', v: true }); }
   else S.articles = a;
+  S.settings.serveur = Object.assign(clone(DEFAULT_SETTINGS.serveur), S.settings.serveur || {});
+  if (['{numero}_{projet}', '{projet}'].includes(S.settings.serveur.pattern)) S.settings.serveur.pattern = '{dossier}';
+  if (!S.settings.serveur.sousDossiers) { S.settings.serveur.sousDossiers = DEFAULT_SETTINGS.serveur.sousDossiers; S.settings.serveur.dossierOffre = DEFAULT_SETTINGS.serveur.dossierOffre; }
   if (!Array.isArray(S.settings.departs) || !S.settings.departs.length) S.settings.departs = clone(DEFAULT_SETTINGS.departs);
   { const known = new Set(S.settings.departs.map((d) => d.id)), names = new Set(S.settings.departs.map((d) => (d.nom || '').toLowerCase()));
     for (const d of DEFAULT_SETTINGS.departs) if (!known.has(d.id) && !names.has(d.nom.toLowerCase())) S.settings.departs.push(clone(d)); }
@@ -579,6 +585,14 @@ function applyTrajet(b) {
 /* Complexité du bâtiment : niveau proposé selon le nombre de critères cochés (0 / 1-2 / 3-4 / 5+), forçable */
 function cxCount(b) { const c = (b.complexite && b.complexite.criteres) || {}; return Object.values(c).filter(Boolean).length; }
 function cxNiveau(b) { const n = b.complexite && b.complexite.niveau; if (n != null && n !== '' && n !== 'auto') return +n; const k = cxCount(b); return k === 0 ? 0 : k <= 2 ? 1 : k <= 4 ? 2 : 3; }
+/* Hauteur totale du bâtiment (protection incendie AEAI) : saisie > maquette 3D swisstopo > estimation par les niveaux */
+function hauteurInfo(b) {
+  if (b.hauteurManuel != null && b.hauteurManuel !== '') return { h: num(b.hauteurManuel), src: 'saisie' };
+  if (b.cx3d && b.cx3d.m && b.cx3d.m.hauteur) return { h: num(b.cx3d.m.hauteur), src: '3D swisstopo', egout: b.cx3d.m.hEgout };
+  if (num(b.niveaux) > 0) return { h: r2(num(b.niveaux) * 3 + 1.5), src: 'estimation (niveaux × 3 m + toiture)', est: true };
+  return null;
+}
+function hauteurAEAI(h) { return h == null ? '' : h <= 11 ? 'bâtiment de faible hauteur' : h <= 30 ? 'bâtiment de moyenne hauteur' : 'bâtiment élevé'; }
 function cxPct(b) { const N = S.baremes.complexite.niveaux[cxNiveau(b)]; return N ? num(N.pct) : 0; }
 function cxLabel(b) { const C = (b.complexite && b.complexite.criteres) || {}, N = S.baremes.complexite.niveaux[cxNiveau(b)];
   const crit = S.baremes.complexite.criteres.filter((x) => C[x.k]).map((x) => x.court);
@@ -661,6 +675,34 @@ function trajet(b) { const st = S.settings; const km = num(b.distanceKm), kf = k
   return { h: min / 60 * 2 + kf * 2 * st.km / st.taux, forfait: Math.round((min / 60 * 2 * st.taux + kf * 2 * st.km) / 5) * 5, km: kf }; }
 function cx(b) { return b.categorie === 'ind' ? 1 : (b.logements || 0) > 10 ? 2.5 : 2; }
 
+/* Mise à jour d'un CECB existant (ex. suite au remplacement du chauffage) */
+function cecbMajSections(o) {
+  const op = o.options, motif = String(op.majMotif || '').trim().replace(/\.$/, ''), pac = /pompe à chaleur|\bPAC\b/i.test(motif), vis = op.majVisite !== false;
+  return [
+    { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour effectuer la mise à jour du CECB ${op.possessif === "d'un" ? 'du' : op.possessif} bâtiment sis **${ADR(o)}**${motif ? ` suite à ${motif}` : ''}. C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
+    { id: 'prest', title: 'Prestations pour la mise à jour du CECB', body: `- Reprise des données du CECB existant et regroupement des informations relatives aux modifications du bâtiment
+${vis ? '- Déplacement et visite du bâtiment pour le relevé des modifications (environ 30 min à 1h sur place)\n' : ''}- Mise à jour des données du bâtiment${pac ? ' et de la nouvelle installation de production de chaleur' : ''} dans l'outil en ligne CECB
+- Établissement du nouveau document CECB officiel` },
+    { id: 'docs', title: 'Documents à nous remettre', body: `Plusieurs documents sont nécessaires pour nous permettre de mener à bien notre mission et de vous fournir un travail de qualité.${vis ? ' Ces documents et ces informations peuvent nous être remis lors de notre visite du bâtiment.' : ''}
+
+- CECB existant (numéro ou copie du certificat)
+- Données du bâtiment
+  - nom et coordonnées du propriétaire
+  - adresse de facturation si différente du propriétaire
+${pac ? '- Protocole de mise en service et fiche technique de la nouvelle pompe à chaleur\n' : ''}- Descriptif ou factures des travaux réalisés depuis l'établissement du CECB existant
+- Plans des éventuelles parties transformées du bâtiment (si l'enveloppe a été modifiée)` },
+    { id: 'devis', title: 'Devis', devis: true, pageBreak: true },
+    { id: 'divers', title: 'Délais et divers', pageBreak: true, body: `- Délai de transmission du CECB mis à jour : environ ${op.delai} jours ouvrables ${vis ? 'après visite du bâtiment' : 'après réception des documents'}, sous réserve que les documents nécessaires soient fournis, ou selon entente avec notre expert. ${DELAI_STD}
+- Conditions de paiement : 30 jours après délivrance de la facture.
+- Validité de l'offre : ${o.validiteJours} jours.
+- Conditions de prestations : nos ingénieurs accrédités Experts CECB réalisent leur mission dans l'état actuel des connaissances de la technique et des informations transmises par le mandataire.
+- La présente offre se base sur la reprise du CECB existant. Si celui-ci est inutilisable ou si des modifications importantes non annoncées sont constatées, un montant supplémentaire peut être demandé.
+- Les taxes de publication du CECB pour la mise à jour (${S.settings.pubMaj}.- CHF) sont incluses.` },
+    { id: 'info', title: 'Informations supplémentaires', body: `Le CECB est le Certificat énergétique cantonal des bâtiments et il s'agit d'un document officiel. Il montre sous la forme d'étiquettes de couleurs d'une part l'efficacité de l'enveloppe thermique du bâtiment et d'autre part l'efficacité des installations techniques. Après des travaux (remplacement du chauffage, isolation, installation photovoltaïque…), sa mise à jour permet de refléter l'état actuel du bâtiment et ses nouvelles classes énergétiques.
+
+Notre équipe est composée de ${S.settings.nbExperts} experts CECB certifiés avec plus de 40 ans d'expérience cumulée de conseils en matière de rénovation énergétique des bâtiments. Nos clients bénéficient de nos conseils avec notre approche qui se veut totalement neutre quant aux travaux à réaliser puisque notre bureau ne vend aucune installation, ni aucune prestation pour l'exécution des éventuels travaux de rénovation.` },
+  ];
+}
 const ADR = (o) => o.batiment.adresse || o.projet.adresse || '[adresse du bâtiment]';
 const CIV = (o) => o.client.civilite || 'Madame, Monsieur';
 const TEAM = (o) => `Le bureau batismart SA est composé d'une équipe de ${S.settings.nbIngenieurs} ingénieurs possédant une solide expérience dans la planification, l'inspection et la certification de bâtiment, avec près de 10'000 bâtiments certifiés à notre actif. Nos travaux et nos conseils sont totalement neutres car notre bureau ne vend aucune installation, ni aucune prestation pour l'exécution des travaux. Au travers de nos activités, nous travaillons activement avec de grands labels et associations (Minergie, ECO, CECB, SméO) et collaborons avec l'administration fédérale (OFEN, SuisseEnergie), ainsi que les administrations cantonales des cantons romands.`;
@@ -791,13 +833,15 @@ const ZONES_FIELD = { k: 'zones', label: 'Bâtiments / zones du projet', type: '
 const TYPES = {
   /* ---------------------------------------------------------- CECB */
   CECB: {
-    label: 'CECB / CECB Plus', fichier: 'CECB_Plus', validite: 60,
-    defaults: { prestation: 'CECB Plus', motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
+    label: 'CECB / CECB Plus', fichier: (o) => ({ 'CECB Plus': 'CECB_Plus', 'Mise à jour CECB': 'CECB_MAJ' }[o.options.prestation] || 'CECB'), validite: 60,
+    defaults: { prestation: 'CECB Plus', majMotif: "l'installation d'une pompe à chaleur", majVisite: true, motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
     options: [
-      { k: 'prestation', label: 'Prestation', type: 'select', opts: ['CECB', 'CECB Plus'] },
+      { k: 'prestation', label: 'Prestation', type: 'select', opts: ['CECB', 'CECB Plus', 'Mise à jour CECB'] },
+      { k: 'majMotif', label: 'Mise à jour suite à', type: 'text', ph: "l'installation d'une pompe à chaleur", show: (o) => o.options.prestation === 'Mise à jour CECB' },
+      { k: 'majVisite', label: 'Visite du bâtiment', type: 'bool', show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'possessif', label: 'Formulation', type: 'select', opts: ['de votre', "d'un", 'du'] },
-      { k: 'motif', label: 'Motif (suite de la phrase d\'intro)', type: 'text', ph: 'ex. nécessaire pour la vente.' },
-      { k: 'chauffren', label: 'Conseil incitatif CHAUFF-REN (chauffage > 10 ans)', type: 'bool', hint: (o) => o.batiment.chauffageMaj ? `RegBL : info chauffage mise à jour le ${o.batiment.chauffageMaj} – vérifier l'âge sur map.geo.admin` : 'Vérifier l\'âge du chauffage dans map.geo.admin' },
+      { k: 'motif', label: 'Motif (suite de la phrase d\'intro)', type: 'text', ph: 'ex. nécessaire pour la vente.', show: (o) => o.options.prestation !== 'Mise à jour CECB' },
+      { k: 'chauffren', label: 'Conseil incitatif CHAUFF-REN (chauffage > 10 ans)', type: 'bool', show: (o) => o.options.prestation !== 'Mise à jour CECB', hint: (o) => o.batiment.chauffageMaj ? `RegBL : info chauffage mise à jour le ${o.batiment.chauffageMaj} – vérifier l'âge sur map.geo.admin` : 'Vérifier l\'âge du chauffage dans map.geo.admin' },
       { k: 'subvCantonale', label: 'Déduire la subvention CECB Plus cantonale', type: 'bool', show: (o) => o.options.prestation === 'CECB Plus' },
       { k: 'subvCommunale', label: 'Subvention CECB Plus communale', type: 'bool', show: (o) => o.options.prestation === 'CECB Plus' },
       { k: 'rabaisChauffren', label: `Rabais combinaison CHAUFF-REN`, type: 'bool', show: (o) => o.options.prestation === 'CECB Plus' && o.options.chauffren },
@@ -810,6 +854,14 @@ const TYPES = {
     ],
     build(o) {
       const b = o.batiment, op = o.options, st = S.settings, plus = op.prestation === 'CECB Plus';
+      if (op.prestation === 'Mise à jour CECB') {
+        const B = blk("Devis pour la mise à jour d'un CECB", { summaryLabel: 'Mise à jour CECB' }), M = S.baremes.cecbMaj, f = num(M[b.categorie] ?? M.ind), tj = op.majVisite ? trajet(b) : { forfait: 0 };
+        B.lines.push(L(`Forfait pour la mise à jour du CECB (${catTxt(b).toLowerCase()})${op.majVisite ? ' – visite incluse' : ''}`, 1, 'forfait', f));
+        if (tj.forfait) B.lines.push(L(`Déplacement (${fmtN(tj.km, 0)} km au-delà des ${st.seuilZone} km offerts)`, 1, 'forfait', tj.forfait));
+        B.lines.push(L("Frais de publication facturé par l'association CECB", 1, 'forfait', st.pubMaj));
+        addCx(o, B, f);
+        return [B];
+      }
       const grid = plus ? S.baremes.cecbp : S.baremes.cecb, row = grid[gridRow(grid, b)], zone = zoneOf(b), ht = row[zone];
       const out = [];
       if (!plus) {
@@ -846,9 +898,10 @@ const TYPES = {
       }
       return out;
     },
-    title(o) { return `Offre n° ${o.numero} pour l'établissement ${o.options.possessif} ${o.options.prestation} – Projet ${o.projet.nom || '[NomProjet]'}`; },
+    title(o) { return o.options.prestation === 'Mise à jour CECB' ? `Offre n° ${o.numero} pour la mise à jour ${o.options.possessif} CECB – Projet ${o.projet.nom || '[NomProjet]'}` : `Offre n° ${o.numero} pour l'établissement ${o.options.possessif} ${o.options.prestation} – Projet ${o.projet.nom || '[NomProjet]'}`; },
     sections(o) {
       const op = o.options, plus = op.prestation === 'CECB Plus', s = [];
+      if (op.prestation === 'Mise à jour CECB') return cecbMajSections(o);
       s.push({ id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour effectuer le ${op.prestation} ${op.possessif === "d'un" ? 'du' : op.possessif} bâtiment sis **${ADR(o)}**${op.motif ? ' ' + op.motif.trim() : '.'} C'est avec plaisir que nous vous soumettons notre offre de prestations.${plus ? "\n\nNous vous proposons un audit énergétique CECB Plus qui nous permettra de composer jusqu'à 3 variantes de rénovation prenant en compte vos besoins, les priorités de rénovation, votre budget et en effectuant les meilleures combinaisons possibles de subventions. Nous vous proposons cette prestation sous la forme d'un forfait clé en main incluant toutes les prestations décrites ci-après." : ''}${op.chauffren ? `\n\nA cela nous vous proposons de combiner un conseil incitatif chauffez-renouvelable. Cette analyse est gratuite pour tout chauffage de plus de 10 ans et permet de définir les possibilités et opportunités de remplacement du chauffage. Nous pourrons ainsi combiner les résultats obtenus au ${op.prestation}. Si votre chaudière est plus récente, nous n'effectuerons pas cette prestation pour éviter d'entraîner des surcoûts.` : ''}` });
       s.push({ id: 'prest', title: `Prestations pour l'élaboration du ${op.prestation}`, body: `- Regroupement de toutes les informations relatives au bâtiment nécessaires à l'expertise
 - Déplacement et visite du bâtiment (environ 1h à 1h30 sur place)
@@ -895,7 +948,7 @@ Notre équipe est composée de ${S.settings.nbExperts} experts CECB certifiés a
     },
     bpa(o) {
       const main = o.blocks.filter((b) => b.key !== 'chauffren' && !b.exclude), cr = o.blocks.find((b) => b.key === 'chauffren' && !b.exclude), out = [];
-      if (main.length) out.push({ title: `Bon pour accord - Offre n° ${o.numero} pour l'établissement ${o.options.possessif} ${o.options.prestation} – Projet ${o.projet.nom}`, blocks: main.map((b) => b.id), resume: true });
+      if (main.length) out.push({ title: o.options.prestation === 'Mise à jour CECB' ? `Bon pour accord - Offre n° ${o.numero} pour la mise à jour ${o.options.possessif} CECB – Projet ${o.projet.nom}` : `Bon pour accord - Offre n° ${o.numero} pour l'établissement ${o.options.possessif} ${o.options.prestation} – Projet ${o.projet.nom}`, blocks: main.map((b) => b.id), resume: true });
       if (cr) out.push({ title: `Bon pour accord - Offre n° ${o.numero} pour l'établissement du conseil incitatif « Chauffez-renouvelable » – Projet ${o.projet.nom}`, blocks: [cr.id], resume: true });
       return out;
     },
@@ -1018,8 +1071,9 @@ ${op.realisation === false ? "- La phase réalisation (demande de certificat dé
   /* ---------------------------------------------------------- Protection incendie */
   PI: {
     label: 'Protection incendie (CFC 298.5)', fichier: 'PI', validite: 60,
-    defaults: { realisation: true, visites: 0, items: {}, rabaisP: false, rabaisPTxt: '', rabaisPMontant: 0, delai: 20, delaiFinal: 20, trajetVisiteIncl: true, trajetPresIncl: true, presTeams: true },
+    defaults: { realisation: true, hauteurTxt: true, visites: 0, items: {}, rabaisP: false, rabaisPTxt: '', rabaisPMontant: 0, delai: 20, delaiFinal: 20, trajetVisiteIncl: true, trajetPresIncl: true, presTeams: true },
     options: [
+      { k: 'hauteurTxt', label: 'Mentionner la hauteur du bâtiment (AEAI) dans l\'offre', type: 'bool' },
       { k: 'realisation', label: 'Inclure le suivi des travaux (phase réalisation)', type: 'bool' },
       { k: 'visites', label: 'Nombre de visites de chantier (0 = auto selon surface)', type: 'num', show: (o) => o.options.realisation !== false },
       { k: 'items', label: 'Prestations', type: 'items' },
@@ -1047,7 +1101,7 @@ ${op.realisation === false ? "- La phase réalisation (demande de certificat dé
     sections(o) {
       const op = o.options, [p, r, t] = o.blocks;
       return [
-        { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour assurer le concept de protection incendie pour la phase d'enquête${op.realisation === false ? '' : ' et le suivi de réalisation des mesures de protection incendie'} du projet sis **${ADR(o)}**. C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
+        { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour assurer le concept de protection incendie pour la phase d'enquête${op.realisation === false ? '' : ' et le suivi de réalisation des mesures de protection incendie'} du projet sis **${ADR(o)}**.${(() => { const hi = hauteurInfo(o.batiment); return hi && !hi.est && op.hauteurTxt !== false ? ` D'une hauteur totale d'environ ${fmtN(hi.h, 1)} m, le bâtiment est considéré comme un ${hauteurAEAI(hi.h)} au sens des prescriptions de protection incendie AEAI.` : ''; })()} C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
         { id: 'devp', title: 'Prestations pour la phase projet', devis: true, only: p ? [p.id] : [] },
         { id: 'devr', title: 'Prestations pour la phase réalisation', devis: true, only: r ? [r.id] : [], pageBreak: true },
         { id: 'devt', title: 'Total pour les deux phases', devis: true, only: t ? [t.id] : [] },
@@ -1469,7 +1523,8 @@ function buildDocDef(o) {
 function pdfFileName(o) {
   const clean = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
   const nom = String(o.projet.nom || '').replace(new RegExp('^' + o.numero.replace(/[-]/g, '\\-') + '\\s*'), '');
-  return `${o.numero}_Offre_${TYPES[o.type].fichier}_${clean(nom) || 'Projet'}.pdf`;
+  const T = TYPES[o.type], fic = typeof T.fichier === 'function' ? T.fichier(o) : T.fichier;
+  return `${o.numero}_Offre_${fic}_${clean(nom) || 'Projet'}.pdf`;
 }
 function pdfReady() { if (!window.pdfMake) { alert("La bibliothèque PDF n'a pas pu être chargée (connexion internet requise au premier chargement)."); return false; } return true; }
 function pdfDownload(o) { if (pdfReady()) pdfMake.createPdf(buildDocDef(o)).download(pdfFileName(o)); }
@@ -1639,10 +1694,126 @@ async function docxDownload(o) {
 }
 
 'use strict';
+/* ============================================================ dossier projet sur le serveur (File System Access API – Chrome / Edge)
+   L'utilisateur choisit une fois le dossier racine (lecteur réseau) ; l'outil y crée ensuite le dossier de chaque offre
+   avec ses sous-dossiers et y enregistre le PDF et le Word. */
+const SRV = { handle: null };
+const srvSupported = () => typeof window.showDirectoryPicker === 'function';
+const srvClean = (s) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+/* nom de dossier batismart : nom de la rue sans le type de voie + n° + localité
+   « Chemin du Couchant 41, 1485 Granges-de-Vesin » → « Couchant 41 Granges-de-Vesin » */
+const VOIE_RE = /^(?:rue|route|rte|chemin|ch|avenue|av|boulevard|bd|impasse|imp|place|pl|all[ée]e|sentier|quai|ruelle|passage|promenade|esplanade|mont[ée]e|faubourg|square|venelle|carrefour|rond-point|cour|clos|piazza|via|vicolo|strada)\.?\s+(?:(?:du|des|de la|de l['’]|de|d['’]|à la|au|aux|la|le|les|l['’])\s*)?/i;
+function dossierNom(o) {
+  const b = o.batiment, sp = splitAdresse(b.adresse);
+  let rue = String(b.rue || sp.rue || '').trim(); const loc = String(b.localitePost || sp.localite || '').trim();
+  const r2 = rue.replace(VOIE_RE, ''); if (r2.trim()) rue = r2.charAt(0).toUpperCase() + r2.slice(1);
+  return [rue, loc].filter(Boolean).join(' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+}
+const PREST_DOSSIER = { CECB: (o) => 'CECB', EN: () => 'Dossier EN', MIN: () => 'Minergie', PI: () => 'Protection incendie', SUBV: () => 'Subventions', AMO: () => 'AMO', THERMO: () => 'Thermographie', CONF: () => 'Conformité' };
+function srvSegs(o, str) { const t = srvTokens(o); return String(str || '').replace(/\{(\w+)\}/g, (_, k) => (t[k] != null ? String(t[k]) : '')).split('/').map(srvClean).filter(Boolean); }
+function srvSubs(o) { return String((S.settings.serveur || {}).sousDossiers || '').split('\n').map((x) => srvSegs(o, x)).filter((x) => x.length); }
+function srvTokens(o) {
+  const d = o.dateCreation || today(), T = TYPES[o.type];
+  return { numero: o.numero, annee: d.slice(0, 4), aa: d.slice(2, 4), mois: d.slice(5, 7), type: (typeof T.fichier === 'function' ? T.fichier(o) : T.fichier) || o.type, typeLong: T.label,
+    dossier: dossierNom(o) || o.projet.nom || 'Projet', projet: o.projet.nom || o.batiment.adresse || 'Projet', prestation: (PREST_DOSSIER[o.type] || (() => T.label))(o), client: o.client.societe || o.client.nom || 'Client', localite: o.batiment.localitePost || o.client.localite || '' };
+}
+/* « {annee}/{numero}_{projet} » → ['2026', '26101612_Rue du Lac 12 Yverdon-les-Bains'] */
+function srvPath(o) {
+  const t = srvTokens(o), pat = (S.settings.serveur && S.settings.serveur.pattern) || '{numero}_{projet}';
+  return pat.split('/').map((seg) => srvClean(seg.replace(/\{(\w+)\}/g, (_, k) => (t[k] != null ? String(t[k]).replace(/,/g, '') : '')))).filter(Boolean);
+}
+async function srvHandle(ask) {
+  if (!SRV.handle) { const r = await DB.get('kv', 'serverDir'); if (r && r.handle) SRV.handle = r.handle; }
+  if (!SRV.handle) return null;
+  const opt = { mode: 'readwrite' };
+  if ((await SRV.handle.queryPermission(opt)) === 'granted') return SRV.handle;
+  if (ask && (await SRV.handle.requestPermission(opt)) === 'granted') return SRV.handle;
+  return null;
+}
+async function srvPick() {
+  if (!srvSupported()) { alert("Votre navigateur ne permet pas d'écrire dans un dossier. Utilisez Google Chrome ou Microsoft Edge."); return; }
+  try {
+    const h = await window.showDirectoryPicker({ id: 'batismart-serveur', mode: 'readwrite' });
+    SRV.handle = h; await DB.putRaw('kv', { id: 'serverDir', handle: h });
+    (S.settings.serveur ||= {}).racine = h.name; await saveSettings(); render(); toast('Dossier racine : ' + h.name);
+  } catch (e) { if (e.name !== 'AbortError') alert('Dossier non accessible : ' + e.message); }
+}
+async function srvWrite(dir, name, blob) { const f = await dir.getFileHandle(name, { create: true }); const w = await f.createWritable(); await w.write(blob); await w.close(); }
+async function srvCreate(o) {
+  if (!srvSupported()) { alert("La création de dossier sur le serveur nécessite Google Chrome ou Microsoft Edge."); return; }
+  let root = await srvHandle(true);
+  if (!root) { if (!confirm("Aucun dossier racine du serveur n'est encore défini (ou l'accès a été refusé).\nLe choisir maintenant ?")) return; await srvPick(); root = await srvHandle(true); if (!root) return; }
+  if (!pdfReady()) return;
+  const cfg = S.settings.serveur || {}, path = srvPath(o);
+  try {
+    let dir = root; for (const seg of path) dir = await dir.getDirectoryHandle(seg, { create: true });
+    const subs = srvSubs(o);
+    for (const sp of subs) { let d = dir; for (const seg of sp) d = await d.getDirectoryHandle(seg, { create: true }); }
+    let target = dir; for (const seg of srvSegs(o, cfg.dossierOffre)) target = await target.getDirectoryHandle(seg, { create: true });
+    const base = pdfFileName(o).replace(/\.pdf$/, '');
+    await srvWrite(target, base + '.pdf', await pdfBlob(o));
+    if (cfg.word !== false) await srvWrite(target, base + '.docx', await buildDocx(o));
+    const full = [root.name, ...path, ...srvSegs(o, cfg.dossierOffre)].filter(Boolean).join(' \\ ');
+    o.dossierServeur = full; hist(o, 'Dossier serveur', full); await saveOffre(o); render();
+    toast('Offre enregistrée dans ' + full);
+  } catch (e) { alert("Impossible d'écrire sur le serveur : " + e.message); }
+}
+
+/* ------------------------------------------------------------ dossier projet prêt à coller (.zip) */
+async function srvZip(o) {
+  if (!pdfReady()) return;
+  const cfg = S.settings.serveur || {}, path = srvPath(o), top = path.join('/'), enc = new TextEncoder(), files = [];
+  const dirs = new Set(); const addDir = (p) => { const parts = p.split('/'); for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/') + '/'); };
+  addDir(top);
+  for (const sp of srvSubs(o)) addDir([top, ...sp].join('/'));
+  const off = srvSegs(o, cfg.dossierOffre), target = [top, ...off].join('/');
+  addDir(target);
+  const base = pdfFileName(o).replace(/\.pdf$/, '');
+  try {
+    const pdf = new Uint8Array(await (await pdfBlob(o)).arrayBuffer()), docx = new Uint8Array(await (await buildDocx(o)).arrayBuffer());
+    for (const d of [...dirs].sort()) files.push({ name: d, data: new Uint8Array(0) });
+    files.push({ name: target + '/' + base + '.pdf', data: pdf }, { name: target + '/' + base + '.docx', data: docx });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(storeZip(files)); a.download = String(path[path.length - 1] || 'Projet').normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '.zip'; // nom du .zip sans accents (le dossier à l'intérieur les garde)
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+    hist(o, 'Dossier projet (.zip)', top); await saveOffre(o);
+    toast('Dossier « ' + top + ' » téléchargé – à extraire puis coller sur le serveur');
+  } catch (e) { alert('Création du dossier impossible : ' + e.message); }
+}
+
+/* ------------------------------------------------------------ dossier projet sans offre de l'outil (offre faite à la main) */
+function dossierLibreModal() {
+  const opts = [['CECB', 'CECB', 'CECB'], ['CECB', 'CECB Plus', 'CECB Plus'], ['CECB', 'Mise à jour CECB', 'Mise à jour CECB'], ['EN', '', 'Dossier énergétique'], ['MIN', '', 'Dossier EN + Minergie'], ['SUBV', '', 'Subventions'], ['AMO', '', 'AMO'], ['PI', '', 'Protection incendie'], ['THERMO', '', 'Thermographie'], ['CONF', '', 'Contrôle de conformité']];
+  const m = modal(`<h2>Dossier projet</h2><p class="note" style="margin-top:-4px">Pour une offre faite à la main : l'outil crée l'arborescence (${esc(srvSubs({ type: 'CECB', options: { prestation: 'CECB' }, batiment: {}, projet: {}, client: {}, numero: '' }).map((x) => x.join('/')).join(', '))}) et y range vos fichiers.</p>
+    <label class="f">Adresse du bâtiment<input id="dl-adr" placeholder="Chemin de Florimont 10, 1400 Yverdon-les-Bains" list="dl-adr-l" autocomplete="off"><datalist id="dl-adr-l"></datalist></label>
+    <label class="f" style="margin-top:10px">Prestation<select id="dl-pr">${opts.map(([t, p, l], i) => `<option value="${i}">${esc(l)}</option>`).join('')}</select></label>
+    <label class="f" style="margin-top:10px">Fichiers de l'offre (Word / PDF) – facultatif<input type="file" id="dl-files" multiple></label>
+    <div class="hint" style="margin-top:12px">Dossier : <b id="dl-name">–</b></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" data-close>Annuler</button><button class="btn pri" id="dl-go" disabled>📁 Télécharger le dossier</button></div>`);
+  const fake = () => { const [t, p] = opts[+m.querySelector('#dl-pr').value]; const adr = m.querySelector('#dl-adr').value.trim(); return { type: t, options: { ...clone(TYPES[t].defaults), ...(p ? { prestation: p } : {}) }, batiment: { adresse: adr }, projet: { nom: projetAuto({ batiment: { adresse: adr } }) }, client: {}, numero: '', dateCreation: today() }; };
+  const upd = () => { const o = fake(), n = o.batiment.adresse ? srvPath(o).join(' \\ ') : ''; m.querySelector('#dl-name').textContent = n || '–'; m.querySelector('#dl-go').disabled = !n; };
+  let tmr = null; const inp = m.querySelector('#dl-adr');
+  inp.oninput = () => { upd(); clearTimeout(tmr); const q = inp.value.trim(); if (q.length < 4) return; tmr = setTimeout(async () => { try { const r = await geoSearch(q); m.querySelector('#dl-adr-l').innerHTML = r.slice(0, 6).map((x) => `<option value="${esc(x.label)}"></option>`).join(''); } catch (e) { /* hors ligne */ } }, 350); };
+  m.querySelector('#dl-pr').onchange = upd;
+  m.querySelector('#dl-go').onclick = async () => {
+    const o = fake(), cfg = S.settings.serveur || {}, path = srvPath(o), top = path.join('/'), dirs = new Set(), files = [];
+    const addDir = (p) => { const parts = p.split('/'); for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/') + '/'); };
+    addDir(top); for (const sp of srvSubs(o)) addDir([top, ...sp].join('/'));
+    const target = [top, ...srvSegs(o, cfg.dossierOffre)].join('/'); addDir(target);
+    for (const d of [...dirs].sort()) files.push({ name: d, data: new Uint8Array(0) });
+    for (const f of m.querySelector('#dl-files').files) files.push({ name: target + '/' + f.name, data: new Uint8Array(await f.arrayBuffer()) });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(storeZip(files)); a.download = String(path[path.length - 1] || 'Projet').normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '.zip';
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+    m.remove(); toast('Dossier « ' + top + ' » téléchargé – à extraire puis coller sur le serveur');
+  };
+  inp.focus();
+}
+
+'use strict';
 /* ============================================================ assistant « Nouvelle offre » : 4 étapes, une question par écran */
 const PRESTAS = [
   { t: 'CECB', p: 'CECB', n: 'CECB', d: 'Certificat énergétique – vente, obligation légale' },
   { t: 'CECB', p: 'CECB Plus', n: 'CECB Plus', d: 'CECB + rapport de conseils et variantes de rénovation' },
+  { t: 'CECB', p: 'Mise à jour CECB', n: 'Mise à jour CECB', d: 'Actualisation d\'un CECB existant (ex. nouvelle PAC)' },
   { t: 'EN', n: 'Dossier énergétique', d: 'Formulaires EN pour le permis de construire' },
   { t: 'MIN', n: 'Dossier EN + Minergie', d: 'Formulaires EN et certification Minergie' },
   { t: 'SUBV', n: 'Subventions', d: 'Programme Bâtiments M01, M05, M06, M14' },
@@ -1654,7 +1825,7 @@ const PRESTAS = [
 ];
 const WLABELS = { bat: 'Bâtiment', presta: 'Prestation', projet: 'Projet', client: 'Client', fin: 'Prix et envoi' };
 const wSteps = (o) => ['bat', 'presta', ...(VIEW.wPicked && ['EN', 'MIN'].includes(o.type) ? ['projet'] : []), 'client', 'fin'];
-const NEUF_KO = ['CECB Plus', 'SUBV', 'AMO', 'THERMO'];
+const NEUF_KO = ['CECB Plus', 'Mise à jour CECB', 'SUBV', 'AMO', 'THERMO'];
 async function startWizard(clientId) {
   const o = newOffre('CECB'); o.wizard = true; VIEW.wPicked = false;
   if (clientId) { const c = S.clients.find((x) => x.id === clientId); if (c) applyClient(o, c); }
@@ -1739,11 +1910,15 @@ function wFin(o) {
   <div class="wiz-price card"><div><span>Total TTC</span><strong>${fmtCHF(mont)} CHF</strong>${net !== mont && !blocks.some((b) => b.variant) ? `<em>Coût réel pour le client après subventions : ${fmtCHF(net)} CHF</em>` : ''}</div>
     <ul>${blocks.map((b) => `<li><span>${esc(b.summaryLabel || b.title)}${b.variant ? ' (variante)' : ''}</span><b>${fmtCHF(blockTotals(b, o).arrondi)}</b></li>`).join('')}</ul></div>
   ${quick.length ? `<div class="card wiz-card"><h3>Ajuster en un clic</h3><div class="grid g2">${quick.map((f) => optField(o, f)).join('')}</div></div>` : ''}
+  ${o.type === 'PI' ? hauteurPanel(o) : ''}
   ${['CECB', 'EN', 'MIN', 'PI'].includes(o.type) ? `<details class="card wiz-card"><summary><b>Complexité du bâtiment : ${esc(S.baremes.complexite.niveaux[cxNiveau(o.batiment)].label)}</b>${cxPct(o.batiment) ? ` (+${cxPct(o.batiment)} %)` : ''}</summary>${cxPanel(o, true)}</details>` : ''}
   <div class="wiz-actions">
     <button class="btn lg" data-act="preview">👁 Voir le PDF</button>
     <button class="btn lg" data-act="pdf" data-id="${o.id}">⬇ Télécharger le PDF</button>
+    <button class="btn lg" data-act="docx" data-id="${o.id}">⬇ Word</button>
+    <button class="btn lg pri" data-act="srvZip" data-id="${o.id}" title="${esc(srvPath(o).join(' \\ '))} : 1. Doc reçus, 2. E-mails, 3. Offre (PDF + Word), 4. Photos…">📁 Créer le dossier projet</button>
     <button class="btn lg pri" data-act="send" data-id="${o.id}">✉ Envoyer au client</button></div>
+  <p class="note" style="text-align:center;margin-top:8px">Dossier : <b>${esc(srvPath(o).join(' \\ '))}</b> – avec l'offre dans « ${esc(srvSegs(o, S.settings.serveur.dossierOffre).join(' \\ ') || 'racine')} » · à extraire puis coller dans 1920 Projets en attente</p>
   <div class="wiz-nav"><button class="btn lg ghost" data-act="wizPrev">← Retour</button><div class="row"><a class="btn ghost" href="#/offre/${o.id}" data-act="wizDetail">Modifier en détail</a><button class="btn lg" data-act="wizDone">Terminer</button></div></div>`;
 }
 async function wizAct(act, a, o) {
@@ -1837,12 +2012,13 @@ async function inflateEntry(buf, en) {
 }
 function crc32(u8) { let c, crc = 0xffffffff; const T = crc32.T || (crc32.T = Array.from({ length: 256 }, (_, n) => { c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; }));
   for (let i = 0; i < u8.length; i++) crc = T[(crc ^ u8[i]) & 0xff] ^ (crc >>> 8); return (crc ^ 0xffffffff) >>> 0; }
-function storeZip(files) { // [{name, data:Uint8Array}] -> Blob (zip non compressé)
+const ZIPT = { t: 0, d: 0x21 };
+function storeZip(files) { const n0 = new Date(); ZIPT.t = (n0.getHours() << 11) | (n0.getMinutes() << 5) | (n0.getSeconds() >> 1); ZIPT.d = ((n0.getFullYear() - 1980) << 9) | ((n0.getMonth() + 1) << 5) | n0.getDate(); // [{name, data:Uint8Array}] -> Blob (zip non compressé)
   const enc = new TextEncoder(), parts = [], central = []; let off = 0;
   for (const f of files) { const nm = enc.encode(f.name), crc = crc32(f.data), h = new DataView(new ArrayBuffer(30));
-    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, nm.length, true);
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(10, ZIPT.t, true); h.setUint16(12, ZIPT.d, true); h.setUint32(14, crc, true); h.setUint32(18, f.data.length, true); h.setUint32(22, f.data.length, true); h.setUint16(26, nm.length, true);
     parts.push(h.buffer, nm, f.data);
-    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    const c = new DataView(new ArrayBuffer(46)); c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(12, ZIPT.t, true); c.setUint16(14, ZIPT.d, true); if (f.name.endsWith('/')) c.setUint32(38, 0x10, true); c.setUint32(16, crc, true); c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
     central.push(c.buffer, nm); off += 30 + nm.length + f.data.length; }
   const csz = central.reduce((s, x) => s + (x.byteLength || x.length), 0), e = new DataView(new ArrayBuffer(22));
   e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true); e.setUint32(12, csz, true); e.setUint32(16, off, true);
@@ -2108,7 +2284,7 @@ function vDash() {
   return `<div class="head"><div><h1>Tableau de bord</h1><div class="sub">Suivi des offres et de la performance commerciale</div></div>
     <div class="row"><select data-filter="period" aria-label="Période">${[['month', 'Ce mois'], ['year', 'Cette année'], ['12m', '12 derniers mois'], ['all', 'Toutes les dates'], ['custom', 'Période personnalisée']].map(([k, l]) => `<option value="${k}" ${f.period === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
     ${f.period === 'custom' ? `<input type="date" data-filter="from" value="${f.from}" aria-label="Du"><input type="date" data-filter="to" value="${f.to}" aria-label="Au">` : ''}
-    <button class="btn pri" data-act="new">${ico('plus')}Nouvelle offre</button></div></div>
+    <button class="btn" data-act="dossierLibre" title="Créer l'arborescence d'un projet dont l'offre a été faite à la main (Word)">📁 Dossier projet</button><button class="btn pri" data-act="new">${ico('plus')}Nouvelle offre</button></div></div>
   ${backup ? `<div class="alert" style="margin-bottom:14px">Dernière sauvegarde : ${S.settings.lastExport ? fmtDate(S.settings.lastExport) : 'jamais'}. Les données ne vivent que dans ce navigateur.<button class="btn sm" data-act="export">Exporter une sauvegarde</button></div>` : ''}
   <div class="kpis">
     <div class="kpi"><span>Offres créées</span><strong>${inP.length}</strong></div>
@@ -2137,7 +2313,7 @@ function vOffre() {
   const T = TYPES[o.type], t = VIEW.tab;
   const tabs = [['client', 'Client & projet'], ['bat', 'Bâtiment'], ['prest', 'Prestations & devis'], ['txt', 'Textes'], ['hist', 'Historique']];
   return `<div class="editbar"><a class="btn ghost" href="#/dash">←</a><div class="grow"><b class="mono">${esc(o.numero)}</b> · ${esc(T.label)} <span class="note">· ${esc(o.projet.nom || 'sans projet')}</span></div>
-    ${stSelect(o)}<button class="btn" data-act="preview">Aperçu PDF</button><button class="btn" data-act="pdf" data-id="${o.id}">Télécharger PDF</button><button class="btn" data-act="docx" data-id="${o.id}" title="Version Word modifiable">Word</button><button class="btn pri" data-act="send" data-id="${o.id}">Envoyer</button>
+    ${stSelect(o)}<button class="btn" data-act="preview">Aperçu PDF</button><button class="btn" data-act="pdf" data-id="${o.id}">Télécharger PDF</button><button class="btn" data-act="docx" data-id="${o.id}" title="Version Word modifiable">Word</button><button class="btn" data-act="srvZip" data-id="${o.id}" title="Télécharge le dossier du projet (${esc(srvPath(o).join(' \\ '))}) avec le PDF et le Word, prêt à coller sur le serveur">📁 Créer le dossier</button>${S.settings.serveur.racine ? `<button class="btn ghost" data-act="srv" data-id="${o.id}" title="${o.dossierServeur ? 'Mettre à jour : ' + esc(o.dossierServeur) : 'Écrire directement dans le dossier racine choisi dans Paramètres'}">Écrire sur le serveur${o.dossierServeur ? ' ✓' : ''}</button>` : ''}<button class="btn pri" data-act="send" data-id="${o.id}">Envoyer</button>
     <button class="btn ghost" data-act="dup" data-id="${o.id}">Dupliquer</button><button class="btn ghost danger" data-act="delOffre">Supprimer</button></div>
   <div class="split"><div><div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="tabc">${{ client: tClient, bat: tBat, prest: tPrest, txt: tTxt, hist: tHist }[t](o)}</div></div>
   <aside id="aside">${aside(o)}</aside></div>`;
@@ -2180,6 +2356,14 @@ function cxPanel(o, compact, inModal) {
       ${b.lat != null && !inModal ? `<button class="btn" style="align-self:end" data-act="cx3d">🧊 Voir le bâtiment en 3D</button>` : ''}</div>
     <div class="note" style="margin-top:8px">${supp.length ? supp.map(([x, l]) => `${esc(x.summaryLabel || x.title)} : <b>+${l.unit === 'h' ? fmtH(l.qty) + ' h' : fmtCHF(lineTotal(l)) + ' CHF HT'}</b>`).join(' · ') : (cxPct(b) ? 'Supplément non applicable à ce type d\'offre.' : 'Aucun supplément.')}</div></div>`;
 }
+function hauteurField(b) { const hi = hauteurInfo(b);
+  return `<label class="f">Hauteur totale [m] ${hi ? `<span class="badge ${hi.est ? '' : 'ok'}">${esc(hi.src)}</span>` : ''}<input type="number" step="any" data-type="numnull" data-bind="batiment.hauteurManuel" value="${b.hauteurManuel ?? ''}" placeholder="${hi && hi.src !== 'saisie' ? fmtN(hi.h, 1) + ' m' : 'à mesurer'}" title="Laisser vide pour la valeur 3D / estimée"></label>`; }
+function hauteurPanel(o) { const b = o.batiment, hi = hauteurInfo(b);
+  return `<div class="card wiz-card"><h3>Hauteur du bâtiment (AEAI)</h3><div class="row" style="align-items:flex-end;gap:16px;flex-wrap:wrap">
+    <div><div style="font-size:26px;font-weight:700">${hi ? fmtN(hi.h, 1) + ' m' : '–'}</div><div class="note">${hi ? `${esc(hi.src)}${hi.egout ? ` · égout ≈ ${fmtN(hi.egout, 1)} m` : ''} · <b>${esc(hauteurAEAI(hi.h))}</b>` : 'Hauteur inconnue'}</div></div>
+    <label class="f" style="max-width:180px">Corriger [m]<input type="number" step="any" data-type="numnull" data-bind="batiment.hauteurManuel" value="${b.hauteurManuel ?? ''}" placeholder="saisie"></label>
+    ${b.lat != null && !b.neuf ? '<button class="btn" data-act="cx3d">🧊 Mesurer en 3D</button>' : ''}</div>
+    <div class="note" style="margin-top:6px">Hauteur totale = du point le plus bas du terrain au point le plus haut de la toiture (maquette swissBUILDINGS3D). ≤ 11 m : faible hauteur · ≤ 30 m : moyenne hauteur · > 30 m : bâtiment élevé.</div></div>`; }
 async function openCx(o) {
   const b = o.batiment;
   const sides = [['N', 'Nord'], ['E', 'Est'], ['S', 'Sud'], ['O', 'Ouest']];
@@ -2198,7 +2382,7 @@ async function openCx(o) {
     const pn = e.target.closest('[data-pane]'); if (pn) { const sat = pn.dataset.pane === 'sat'; m.querySelectorAll('[data-pane]').forEach((x) => x.classList.toggle('on', x === pn));
       const sh = m.querySelector('.sat-host'); if (sat && !sh.firstChild) sh.innerHTML = b.E ? `<iframe src="${satUrl(b, true)}" title="Vue satellite map.geo.admin" allow="fullscreen"></iframe>` : '<div class="note" style="padding:20px">Bâtiment non localisé.</div>';
       sh.hidden = !sat; m.querySelector('.t3-host').hidden = sat; m.querySelector('.t3-status').hidden = sat; m.querySelector('.t3-views').hidden = sat; m.querySelector('.sat-ext').hidden = !sat; return; }
-    if (e.target === m || e.target.closest('[data-close]')) stop3d(); close(e); };
+    if (e.target === m || e.target.closest('[data-close]')) { stop3d(); close(e); render(); return; } close(e); };
   m.querySelector('[data-t3file]').onchange = (e) => { const f = e.target.files[0]; if (f) load3d(o, m.querySelector('.t3-host'), f); };
   if (b.E && b.lat != null) load3d(o, m.querySelector('.t3-host'));
   else { m.querySelector('.t3-status').textContent = 'Pas de bâtiment existant localisé : la 3D swisstopo n\'est disponible que pour un bâtiment existant.'; }
@@ -2231,7 +2415,7 @@ function tBat(o) {
     <label class="f">Catégorie (barème)<select data-bind="batiment.categorie">${Object.entries(CAT_LABEL).map(([k, l]) => `<option value="${k}" ${b.categorie === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     ${F('Nombre de logements', 'batiment.logements', b.logements, 'number')}
     <label class="f">SRE [m²] ${b.sreSource ? `<span class="badge ${/Estimation/.test(b.sreSource) ? '' : 'ok'}">${esc(b.sreSource)}</span>` : ''}<input type="number" step="any" data-type="num" data-bind="batiment.sre" value="${b.sre || ''}"></label>
-    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
+    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${hauteurField(b)}${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
     ${F('Classe RegBL', 'batiment.classe', b.classe)}${F('Chauffage', 'batiment.chauffage', [b.chauffage, b.agent].filter(Boolean).join(' · '))}${F('Info chauffage mise à jour', 'batiment.chauffageMaj', b.chauffageMaj)}
     ${F('Commune', 'batiment.commune', b.commune)}${F('Canton', 'batiment.canton', b.canton)}${F('Parcelle', 'batiment.parcelle', b.parcelle)}</div>
     <h3 style="margin-top:16px">Déplacement</h3>
@@ -2449,7 +2633,7 @@ function vBaremes() {
   ${gridEditor('Minergie – phase réalisation sans visite', 'min.sans', B.min.sans, [['label', 'Prestation'], ['h', 'Heures', 1]])}
   ${gridEditor('Thermographie (tarif thermographie)', 'thermo', B.thermo, [['label', 'Prestation'], ['h', 'Heures', 1]])}
   ${gridEditor('Contrôle de conformité', 'conf', B.conf, [['label', 'Prestation'], ['amount', 'CHF HT', 1]])}
-  <div class="card"><h2>Divers</h2><div class="grid g4"><label class="f">Dossier Minergie [h]<input type="number" step="any" data-type="num" data-bar="min.dossierMin" value="${B.min.dossierMin}"></label><label class="f">Thermo CECB Plus villa [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.villa" value="${B.thermoCecbPlus.villa}"></label><label class="f">Thermo CECB Plus immeuble [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.immeuble" value="${B.thermoCecbPlus.immeuble}"></label><label class="f">m² par visite PI<input type="number" step="any" data-type="num" data-bar="pi.m2ParVisite" value="${B.pi.m2ParVisite}"></label></div></div>
+  <div class="card"><h2>Divers</h2><div class="grid g4"><label class="f">Dossier Minergie [h]<input type="number" step="any" data-type="num" data-bar="min.dossierMin" value="${B.min.dossierMin}"></label><label class="f">Thermo CECB Plus villa [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.villa" value="${B.thermoCecbPlus.villa}"></label><label class="f">Thermo CECB Plus immeuble [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.immeuble" value="${B.thermoCecbPlus.immeuble}"></label><label class="f">Mise à jour CECB hab. ind. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.ind" value="${B.cecbMaj.ind}"></label><label class="f">Mise à jour CECB hab. coll. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.coll" value="${B.cecbMaj.coll}"></label><label class="f">Mise à jour CECB hors habitat [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.hors" value="${B.cecbMaj.hors}"></label><label class="f">m² par visite PI<input type="number" step="any" data-type="num" data-bar="pi.m2ParVisite" value="${B.pi.m2ParVisite}"></label></div></div>
   </div>`;
 }
 
@@ -2471,6 +2655,11 @@ function vParams() {
     ${(s.departs || []).map((d, i) => `<tr><td><input type="text" data-dep="${i}:nom" value="${esc(d.nom)}" aria-label="Nom"></td><td><input type="text" data-dep="${i}:adresse" value="${esc(d.adresse)}" placeholder="Rue n°, NPA Localité" aria-label="Adresse"></td><td><input type="number" step="any" data-dep="${i}:lat" value="${d.lat ?? ''}" aria-label="Latitude"></td><td><input type="number" step="any" data-dep="${i}:lon" value="${d.lon ?? ''}" aria-label="Longitude"></td>
       <td class="n" style="white-space:nowrap"><button class="btn sm" data-act="locDep" data-i="${i}">Localiser</button>${i > 0 ? `<button class="btn sm ghost danger" data-act="delDep" data-i="${i}" aria-label="Supprimer">✕</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
     <div class="row" style="margin-top:8px"><button class="btn sm" data-act="addDep">+ Ajouter un employé</button>${(s.departs || []).some((d) => d.lat == null || d.lat === '') ? '<span class="badge">Adresse à localiser</span>' : ''}</div></div>
+  <div class="card"><h2>Dossier projet</h2><div class="note" style="margin-bottom:10px">Le bouton « 📁 Créer le dossier » d'une offre télécharge le dossier du projet (sous-dossiers + PDF + Word) en .zip : clic droit › Extraire tout, puis coller dans « 1920 Projets en attente ». Option : choisir un dossier racine (ex. le dossier SharePoint synchronisé) pour que l'outil y écrive directement (Chrome / Edge).</div>
+    <div class="row" style="margin-bottom:10px"><button class="btn pri" data-act="srvPick">Choisir un dossier racine (optionnel)…</button><span class="note">${s.serveur.racine ? 'Actuel : <b>' + esc(s.serveur.racine) + '</b>' : 'Aucun dossier choisi'}</span></div>
+    <div class="grid g2">${P('Nom du dossier projet (/ = sous-niveau)', 'serveur.pattern', 'text', 'placeholder="{dossier}"')}${P("Sous-dossier où enregistrer l'offre (vide = racine du projet)", 'serveur.dossierOffre', 'text', 'placeholder="ex. 01_Offre"')}
+    <label class="f">Sous-dossiers à créer (un par ligne)<textarea data-set="serveur.sousDossiers" placeholder="01_Offre&#10;02_Documents client&#10;03_Calculs" style="min-height:90px">${esc(s.serveur.sousDossiers)}</textarea></label>
+    <div class="note" style="align-self:end">Variables : {dossier} (rue sans « Chemin du… » + n° + localité) {prestation} (CECB, Dossier EN, Minergie, Protection incendie…) {numero} {projet} {client} {type} {annee} {aa} {mois} {localite}<br>Par défaut : <span class="mono">{dossier}</span> → <span class="mono">Couchant 41 Granges-de-Vesin</span>, <span class="mono">Platy 45 Villars-sur-Glâne</span></div></div></div>
   <div class="card"><h2>E-mail</h2><label class="f">Signature des e-mails<textarea data-set="mailSignature">${esc(s.mailSignature)}</textarea></label></div>
   <div class="card"><h2>Données</h2><div class="note" style="margin-bottom:10px">Tout est stocké dans ce navigateur (IndexedDB). Exportez régulièrement une sauvegarde ; pour changer de poste, importez-la sur l'autre navigateur. Dernière sauvegarde : ${s.lastExport ? fmtDateTime(s.lastExport) : 'jamais'}.</div>
     <div class="row"><button class="btn pri" data-act="export">Exporter la sauvegarde (.json)</button><label class="btn">Importer une sauvegarde<input type="file" accept="application/json,.json" data-import hidden></label>
@@ -2580,6 +2769,10 @@ async function onClick(e) {
     case 'dup': duplicate(a.dataset.id); break;
     case 'pdf': pdfDownload(byId); break;
     case 'docx': docxDownload(byId); break;
+    case 'srv': srvCreate(byId); break;
+    case 'srvZip': srvZip(byId); break;
+    case 'dossierLibre': dossierLibreModal(); break;
+    case 'srvPick': srvPick(); break;
     case 'send': sendModal(byId); break;
     case 'preview': previewModal(o); break;
     case 'delOffre': if (confirm(`Supprimer définitivement l'offre ${o.numero} ?`)) { S.offres = S.offres.filter((x) => x.id !== o.id); await DB.del('offres', o.id); location.hash = '#/dash'; } break;
