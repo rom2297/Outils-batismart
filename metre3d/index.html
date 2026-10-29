@@ -1335,6 +1335,26 @@ body.noscroll{overflow:hidden}
       F.getCell(`E${r}`).value = r2(f.l); F.getCell(`F${r}`).value = r2(f.h);
       F.getCell(`L${r}`).value = [f.type === 'Porte' ? 'Porte' : null, w.parent ? `élément parent ${w.parent}` : null, f.note || null].filter(Boolean).join(' — ') || null; r++;
     });
+    // ---- onglet des parties : éléments nommés (découpes, noms), regroupés par élément puis par orientation
+    let PT = wb.getWorksheet('Parties'); if (PT) wb.removeWorksheet(PT.id);
+    PT = wb.addWorksheet('Parties', { views: [{ state: 'frozen', ySplit: 4 }] });
+    PT.getCell('A1').value = `PARTIES DE L'ENVELOPPE — ${name}`; PT.getCell('A1').font = { bold: true, size: 13 };
+    PT.getCell('A2').value = 'Une ligne par élément CECB (même nom, même type, même orientation), avec sous-total par partie. Détail de chaque morceau : onglet « Décomposition 3D ».';
+    PT.getRow(4).values = ['Partie', 'Genre', 'Type CECB', 'Orientation', 'Code CECB', 'Surface brute (m²)', 'Ouvertures (m²)', 'Surface nette (m²)', 'Morceaux 3D'];
+    PT.getRow(4).font = { bold: true }; PT.getRow(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF0' } };
+    const GEN = { mur: 'Mur', toit: 'Toiture', plafond: 'Plafond', sol: 'Sol' }, baseOf = (x) => x.zone || x.name.replace(new RegExp(' - ' + x.orientation + '$'), '');
+    const grpP = new Map(); lines.forEach((x) => { const k = `${x.kind === 'plafond' ? 'toit' : x.kind}|${baseOf(x)}|${x.type}`; (grpP.get(k) || grpP.set(k, []).get(k)).push(x); });
+    let rp = 5; const fill = (c) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: c } });
+    [...grpP.values()].forEach((ls) => { const r0 = rp;
+      ls.forEach((x) => { PT.getRow(rp).values = [baseOf(x), GEN[x.kind], x.type, x.orientation, x.code, r2(x.gross), r2(x.open), r2(x.net), dc.pieces.filter((p) => x.keys.includes(p.key)).length]; rp++; });
+      if (ls.length > 1) { PT.getRow(rp).values = [`Total ${baseOf(ls[0])}`, GEN[ls[0].kind], ls[0].type, ls.map((x) => x.orientation).join(', ')];
+        ['F', 'G', 'H'].forEach((c) => { PT.getCell(`${c}${rp}`).value = { formula: `SUM(${c}${r0}:${c}${rp - 1})` }; });
+        PT.getRow(rp).font = { bold: true }; PT.getRow(rp).fill = fill('FFF3F6F7'); rp++; }
+      rp++; });
+    PT.getCell(`A${rp}`).value = 'TOTAL ENVELOPPE'; PT.getRow(rp).font = { bold: true };
+    ['F', 'G', 'H'].forEach((c) => { PT.getCell(`${c}${rp}`).value = { formula: `SUMIFS(${c}5:${c}${rp - 1},E5:E${rp - 1},"<>")` }; });
+    [34, 10, 40, 14, 11, 16, 15, 16, 12].forEach((w, i) => { PT.getColumn(i + 1).width = w; });
+    [6, 7, 8].forEach((c) => { PT.getColumn(c).numFmt = '0.00'; });
     // ---- onglet de détail : chaque morceau de la 3D
     let D = wb.getWorksheet('Décomposition 3D'); if (D) wb.removeWorksheet(D.id);
     D = wb.addWorksheet('Décomposition 3D', { views: [{ state: 'frozen', ySplit: 4 }] });
