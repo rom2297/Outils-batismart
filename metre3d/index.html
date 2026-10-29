@@ -340,7 +340,7 @@ body.noscroll{overflow:hidden}
           <div class="tablewrap"><table class="edit" id="d3-cuts"><thead><tr><th>Partie</th><th class="n">Dès la cote m</th><th></th></tr></thead><tbody></tbody></table></div>
           <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="d3-cut-add">+ Niveau de découpe</button></div>
           <p class="note" style="margin:12px 0 6px"><b>Verticales</b> (une seule façade, sur toute la hauteur sauf le pignon) : outil « ✂ Coupe verticale » puis clic sur la façade. Au survol, la distance aux deux angles s'affiche ; au clic, la distance se corrige (« d 2.40 » = depuis l'angle droit). Pour nommer les parties : liste déroulante « Nom » (clic sur la partie) ou directement dans le tableau des éléments.</p>
-          <div class="tablewrap"><table class="edit" id="d3-vcuts"><thead><tr><th>Façade</th><th class="n">Depuis l'angle gauche m</th><th></th></tr></thead><tbody></tbody></table></div>
+          <div class="tablewrap"><table class="edit" id="d3-vcuts"><thead><tr><th>Façade</th><th class="n">Depuis l'angle gauche m</th><th title="Prolonger la coupe sur la toiture, jusqu'à la façade d'en face">Toiture</th><th></th></tr></thead><tbody></tbody></table></div>
         </details>
         <h3 style="margin:16px 0 6px">Éléments CECB</h3>
         <div class="tablewrap"><table class="edit" id="d3-lines"><thead><tr><th>Code</th><th>Dénomination</th><th>Type</th><th>Orient.</th><th class="n">Brut m²</th><th class="n">Ouvert. m²</th><th class="n">Net m²</th></tr></thead><tbody></tbody><tfoot><tr id="d3-tot"></tr></tfoot></table></div>
@@ -1448,11 +1448,31 @@ body.noscroll{overflow:hidden}
   const planeZ = (f) => { const n = newell(f), p0 = f[0]; return Math.abs(n[2]) < 1e-9 ? null : { n, p0, z: (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2] }; };
   const inRing = (r, x, y) => { let c = false; for (let a = 0, b = r.length - 1; a < r.length; b = a++) { const [xi, yi] = r[a], [xj, yj] = r[b]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
   function roofPanOf(res, c) {
-    let best = -1, bd = 1.5; res.pans.forEach((p, i) => (p.faces || []).forEach((f) => { if (!inRing(f, c.E, c.N)) return; const pl = planeZ(f); if (!pl) return; const d = Math.abs(pl.z(c.E, c.N) - c.Z); if (d < bd) { bd = d; best = i; } }));
+    let best = -1, bd = 1.5;
+    if (c && c.pan != null && res.pans[c.pan] && (res.pans[c.pan].faces || []).some((f) => inRing(f, c.E, c.N))) return c.pan; res.pans.forEach((p, i) => (p.faces || []).forEach((f) => { if (!inRing(f, c.E, c.N)) return; const pl = planeZ(f); if (!pl) return; const d = Math.abs(pl.z(c.E, c.N) - c.Z); if (d < bd) { bd = d; best = i; } }));
     return best;
   }
+  /* Coupes verticales « reliées à la toiture » (vcut.roof) : droite en plan depuis la coupe, perpendiculaire à la façade, jusqu'à la façade d'en face ;
+     si une autre coupe reliée est alignée en face (à 0.4 m), la droite passe par les deux. Elle coupe tous les pans qu'elle traverse. */
+  function roofLinks(res, extra) {
+    const vc = (extra && extra.vcuts) || [], pts = [], out = [];
+    vc.forEach((c, vi) => { if (!c || !c.roof) return; const q = edgeAt(res, c.E, c.N); if (!q) return; const e = res.edges[q.i];
+      pts.push({ vi, i: q.i, P: [e.p1[0] + e.u[0] * q.s, e.p1[1] + e.u[1] * q.s], d: [-e.n[0], -e.n[1]] }); });
+    const used = new Set();
+    pts.forEach((a) => { if (used.has(a.vi)) return; used.add(a.vi);
+      let tB = Infinity; res.edges.forEach((e, j) => { if (j === a.i) return; const ex = e.p2[0] - e.p1[0], ey = e.p2[1] - e.p1[1], den = a.d[0] * ey - a.d[1] * ex; if (Math.abs(den) < 1e-9) return;
+        const t = ((e.p1[0] - a.P[0]) * ey - (e.p1[1] - a.P[1]) * ex) / den, w = ((e.p1[0] - a.P[0]) * a.d[1] - (e.p1[1] - a.P[1]) * a.d[0]) / den; if (t > 0.3 && w >= -1e-6 && w <= 1 + 1e-6 && t < tB) tB = t; });
+      let B = isFinite(tB) ? [a.P[0] + a.d[0] * tB, a.P[1] + a.d[1] * tB] : null, vis = [a.vi];
+      pts.forEach((b) => { if (used.has(b.vi)) return; const dx = b.P[0] - a.P[0], dy = b.P[1] - a.P[1], t = dx * a.d[0] + dy * a.d[1], off = Math.abs(dx * a.d[1] - dy * a.d[0]);
+        if (t > 0.3 && off < 0.4 && (!isFinite(tB) || t <= tB + 0.5)) { B = b.P; vis.push(b.vi); used.add(b.vi); } });
+      if (B) out.push({ A: a.P, B, vis }); });
+    return out;
+  }
+  const segHitsPan = (p, A, B) => { for (let k = 1; k < 40; k++) { const x = A[0] + (B[0] - A[0]) * k / 40, y = A[1] + (B[1] - A[1]) * k / 40; if ((p.faces || []).some((f) => inRing(f, x, y))) return true; } return false; };
   function roofSplit(res, extra, i) {
-    const p = res.pans[i], cs = ((extra && extra.rcuts) || []).filter((c) => c && isFinite(c.E) && isFinite(c.dx) && roofPanOf(res, c) === i); if (!cs.length || !p.faces) return null;
+    const p = res.pans[i], cs = ((extra && extra.rcuts) || []).filter((c) => c && isFinite(c.E) && isFinite(c.dx) && roofPanOf(res, c) === i);
+    roofLinks(res, extra).forEach((l) => { if (segHitsPan(p, l.A, l.B)) cs.push({ E: l.A[0], N: l.A[1], dx: l.B[0] - l.A[0], dy: l.B[1] - l.A[1] }); });
+    if (!cs.length || !p.faces) return null;
     const big = 1e3, half = (c, sgn) => { const m = Math.hypot(c.dx, c.dy) || 1, ux = c.dx / m, uy = c.dy / m, nx = -uy * sgn, ny = ux * sgn;
       const A = [c.E - ux * big, c.N - uy * big], B = [c.E + ux * big, c.N + uy * big]; return [[A, B, [B[0] + nx * big, B[1] + ny * big], [A[0] + nx * big, A[1] + ny * big], A]]; };
     const H = cs.map((c) => [half(c, 1), half(c, -1)]), reg = new Map();
@@ -1599,7 +1619,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { roofPanOf, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { roofPanOf, roofLinks, segHitsPan, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4425,7 +4445,7 @@ function setCutMode(m){
   $('d3-hcut').setAttribute('aria-pressed', T3.cutMode === 'h' ? 'true' : 'false'); $('d3-vcut').setAttribute('aria-pressed', T3.cutMode === 'v' ? 'true' : 'false');
   T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
   $('d3-tip').textContent = T3.cutMode === 'h' ? 'Coupe horizontale : cliquez sur une façade à la hauteur voulue (toutes les façades, pignon entier) ou sur un pan de toit (coupe parallèle à l\'égout) · glisser une ligne rouge pour la déplacer · Échap : terminer'
-    : T3.cutMode === 'v' ? 'Coupe verticale : cliquez sur la façade à l\'endroit du changement (accroche aux angles et aux tableaux de fenêtres) ou sur un pan de toit (coupe dans le sens de la pente) · glisser une ligne rouge pour la déplacer · Échap : terminer'
+    : T3.cutMode === 'v' ? 'Coupe verticale : cliquez sur la façade à l\'endroit du changement (accroche aux angles et aux tableaux de fenêtres) ou sur un pan de toit (coupe dans le sens de la pente) · sélectionnée, T la relie à la toiture · glisser une ligne rouge pour la déplacer · Échap : terminer'
     : '';
 }
 $('d3-hcut').onclick = () => setCutMode('h'); $('d3-vcut').onclick = () => setCutMode('v');
@@ -4433,7 +4453,9 @@ document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && T3 && T3.
 const hint3 = (t) => { $('d3-tip').textContent = t; };
 const zeroTxt = () => S.res && S.res.baseRef === 'plan' ? `±0.00 du plan (${fmt(S.res.zRefB)} m)` : `point 0 = terrain moyen (${fmt(S.res.zRefB != null ? S.res.zRefB : S.res.tRef)} m)`;
 // double-clic sur une ligne rouge : saisir la cote (horizontale) ou la distance depuis l'angle gauche (verticale)
-function cutDbl(ev){ const sg = segNear(ev); if(!sg || sg.t === 'r') return;
+function cutDbl(ev){ const sg = segNear(ev); if(!sg || sg.t === 'rl') return;
+  if(sg.t === 'r'){ const c = S.extra.rcuts[sg.ri], pan = S.res.pans[sg.pi], q = roofAsk(sg.pi, rKind(pan, c.dx, c.dy), c.E, c.N, c.Z, c.dx, c.dy, 'Coupe de toiture'); if(!q) return;
+    Object.assign(c, { E: +q.E.toFixed(3), N: +q.N.toFixed(3), Z: +q.Z.toFixed(3) }); T3.sel = []; complementsChanged(); return; }
   if(sg.t === 'h'){ const c = S.extra.cuts[sg.ci], v = prompt(`Cote de la coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » en m, par rapport au ${zeroTxt()} :`, c.z.toFixed(2)); if(v == null) return;
     const z = parseFloat(String(v).replace(',', '.')); if(!isFinite(z)) return; const cs = S.extra.cuts, lo = sg.ci > 0 ? cs[sg.ci - 1].z + 0.05 : -Infinity, hi = sg.ci < cs.length - 1 ? cs[sg.ci + 1].z - 0.05 : Infinity;
     if(z <= lo || z >= hi){ hint3('Cette cote dépasse une coupe voisine : supprimez-la ou modifiez les deux.'); return; }
@@ -4481,36 +4503,79 @@ function cutAt(hit, p){
   const nL = '', nR = '';
   (S.extra.vcuts = S.extra.vcuts || []).push({ E: +(e.p1[0] + e.u[0] * s).toFixed(3), N: +(e.p1[1] + e.u[1] * s).toFixed(3) });
   vReKey(p.edge, j, vs.length, 'split'); names = S.extra.names = S.extra.names || {};   // reKey remplace l'objet
+  { const nv = S.extra.vcuts.length - 1, P0 = [e.p1[0] + e.u[0] * s, e.p1[1] + e.u[1] * s], dI = [-e.n[0], -e.n[1]];
+    const op = S.extra.vcuts.findIndex((c, i) => { if(i === nv) return false; const q = C.edgeAt(res, c.E, c.N); if(!q || q.i === p.edge) return false; const dx = c.E - P0[0], dy = c.N - P0[1];
+      return dx * dI[0] + dy * dI[1] > 1 && Math.abs(dx * dI[1] - dy * dI[0]) < 0.4; });
+    if(op >= 0 && confirm('Une coupe verticale est alignée sur la façade d\'en face. Relier les deux par la toiture (la toiture sera coupée entre elles) ?')){ S.extra.vcuts[nv].roof = true; S.extra.vcuts[op].roof = true; } }
   // les deux nouvelles bandes : noms saisis (la découpe horizontale reste : rez / étage × gauche / droite)
   const [lo, hi] = incR ? [nL, nR] : [nR, nL];
   [[j, lo], [j + 1, hi]].forEach(([k, v]) => { const key = `V|${p.edge}|v${k}`; if(v.trim()) names[key] = v.trim(); else delete names[key]; });
   T3.sel = []; complementsChanged();
 }
-// coupe de toiture : horizontale = parallèle à l'égout (à une cote), verticale = dans le sens de la pente ; toit plat : parallèle / perpendiculaire à la façade la plus proche
+// ---- coupes de toiture : repère du pan, mesures, segments dessinés
+/* axe de mesure m (perpendiculaire à la coupe), orienté vers la droite pour un observateur en bas du pan qui le regarde ; t0..t1 = étendue du pan sur m */
+function roofFrame(pi, dx, dy){
+  const pan = S.res.pans[pi], md = Math.hypot(dx, dy) || 1, d = [dx / md, dy / md]; let m = [-d[1], d[0]];
+  if(pan.az != null && pan.tilt > 3){ const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a), r = [-sy, sx]; if(m[0] * r[0] + m[1] * r[1] < 0) m = [-m[0], -m[1]]; }
+  let t0 = Infinity, t1 = -Infinity; (pan.faces || []).forEach((f) => f.forEach((q) => { const t = q[0] * m[0] + q[1] * m[1]; t0 = Math.min(t0, t); t1 = Math.max(t1, t); }));
+  return { pan, d, m, t0, t1 };
+}
+const rKind = (pan, dx, dy) => { if(pan.az == null || pan.tilt <= 3) return 'v'; const a = pan.az * Math.PI / 180; return Math.abs(dx * Math.sin(a) + dy * Math.cos(a)) / (Math.hypot(dx, dy) || 1) > 0.7 ? 'v' : 'h'; };
+function faceZ(pi, x, y){ for(const f of (S.res.pans[pi].faces || [])){ if(!inRing2(f, x, y)) continue; const n = [0, 0, 0]; for(let k = 0; k < f.length; k++){ const a = f[k], c = f[(k + 1) % f.length]; n[0] += (a[1] - c[1]) * (a[2] + c[2]); n[1] += (a[2] - c[2]) * (a[0] + c[0]); n[2] += (a[0] - c[0]) * (a[1] + c[1]); }
+  if(Math.abs(n[2]) > 1e-9) return f[0][2] - (n[0] * (x - f[0][0]) + n[1] * (y - f[0][1])) / n[2]; } return null; }
+// segments 3D d'une droite (E, N, dx, dy) sur les faces des pans donnés ; tr = [tmin, tmax] le long de la droite (infini par défaut)
+function roofLineSegs(pis, E, N, dx, dy, tr){
+  const md = Math.hypot(dx, dy) || 1, ux = dx / md, uy = dy / md, out = [];
+  pis.forEach((pi) => (S.res.pans[pi].faces || []).forEach((f) => {
+    const r = [...f.map((q) => [q[0], q[1]]), [f[0][0], f[0][1]]], hits = [];
+    for(let a = 0; a < r.length - 1; a++){ const [x1, y1] = r[a], [x2, y2] = r[a + 1], ex = x2 - x1, ey = y2 - y1, den = ux * ey - uy * ex; if(Math.abs(den) < 1e-9) continue;
+      const t = ((x1 - E) * ey - (y1 - N) * ex) / den, w = ((x1 - E) * uy - (y1 - N) * ux) / den; if(w >= -1e-6 && w <= 1 + 1e-6) hits.push(t); }
+    hits.sort((a, b) => a - b);
+    for(let a = 0; a + 1 < hits.length; a++){ let ta = hits[a], tb = hits[a + 1]; if(tr){ ta = Math.max(ta, tr[0]); tb = Math.min(tb, tr[1]); } if(tb - ta < 0.05 || !inRing2(r, E + ux * (ta + tb) / 2, N + uy * (ta + tb) / 2)) continue;
+      const pt = (t) => { const x = E + ux * t, y = N + uy * t, z = faceZ(pi, x, y); return [x, y, z != null ? z : f[0][2]]; }; out.push([pt(ta), pt(tb)]); } }));
+  return out;
+}
+const v3 = (q) => new THREE.Vector3(q[0] - T3.o[0], q[2] + 0.05 - T3.o[2], -(q[1] - T3.o[1]));
+// saisie de la position : cote (coupe parallèle à l'égout) ou distance depuis l'extrémité gauche du pan (« d x » depuis la droite)
+function roofAsk(pi, k, E, N, Z, dx, dy, title){
+  const res = S.res, pan = res.pans[pi], zr = res.zRefB != null ? res.zRefB : res.tRef;
+  if(k === 'h'){ const ans = prompt(`${title} — parallèle à l'égout.\nCote en m par rapport au ${zeroTxt()} (pan de ${fmt(pan.zmin - zr)} à ${fmt(pan.zmax - zr)} m) :`, (Z - zr).toFixed(2)); if(ans == null) return null;
+    const zt = parseFloat(String(ans).replace(',', '.')) + zr; if(!isFinite(zt)){ hint3('Cote non valable.'); return null; }
+    if(zt <= pan.zmin + 0.05 || zt >= pan.zmax - 0.05){ hint3(`Cote hors du pan (de ${fmt(pan.zmin - zr)} à ${fmt(pan.zmax - zr)} m).`); return null; }
+    const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a), d = (Z - zt) / Math.tan(pan.tilt * Math.PI / 180); return { E: E + sx * d, N: N + sy * d, Z: zt }; }
+  const F = roofFrame(pi, dx, dy), t = E * F.m[0] + N * F.m[1], L = F.t1 - F.t0;
+  const ans = prompt(`${title} — dans le sens de la pente (largeur du pan ${fmt(L)} m).\nDistance depuis l'extrémité GAUCHE du pan, vue d'en bas (m) — ou « d 2.40 » depuis la droite :`, (t - F.t0).toFixed(2)); if(ans == null) return null;
+  const mm = String(ans).trim().replace(',', '.').match(/^([dg])?\s*(-?\d+(?:\.\d+)?)$/i); if(!mm){ hint3('Distance non valable.'); return null; }
+  const x = parseFloat(mm[2]), tt = mm[1] && mm[1].toLowerCase() === 'd' ? F.t1 - x : F.t0 + x; if(!(tt > F.t0 + 0.1 && tt < F.t1 - 0.1)){ hint3('Distance hors du pan.'); return null; }
+  const E2 = E + F.m[0] * (tt - t), N2 = N + F.m[1] * (tt - t), z2 = faceZ(pi, E2, N2); return { E: E2, N: N2, Z: z2 != null ? z2 : Z };
+}
 function roofCutAt(p, E, N, Z){
-  const res = S.res, pan = res.pans[p.pan], flat = pan.az == null || pan.tilt <= 3, zr = res.zRefB != null ? res.zRefB : res.tRef;
-  let dx, dy, E1 = E, N1 = N, Z1 = Z;
-  if(!flat){ const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a);          // sx, sy : vers le bas de la pente (en plan)
-    if(T3.cutMode === 'h'){ dx = sy; dy = -sx;
-      const ans = prompt(`Coupe du pan ${C.sector(pan.az)} parallèle à l'égout.\nCote en m par rapport au ${zeroTxt()} — valeur cliquée, à corriger si besoin :`, (Z - zr).toFixed(2)); if(ans == null) return;
-      const zt = parseFloat(String(ans).replace(',', '.')) + zr; if(!isFinite(zt)){ hint3('Cote non valable.'); return; }
-      if(zt <= pan.zmin + 0.05 || zt >= pan.zmax - 0.05){ hint3(`Cote hors du pan (de ${fmt(pan.zmin - zr)} à ${fmt(pan.zmax - zr)} m).`); return; }
-      const d = (Z - zt) / Math.tan(pan.tilt * Math.PI / 180); E1 = E + sx * d; N1 = N + sy * d; Z1 = zt; }
-    else { dx = sx; dy = sy; } }
+  const res = S.res, pi = p.pan, pan = res.pans[pi], flat = pan.az == null || pan.tilt <= 3; let dx, dy;
+  if(!flat){ const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a); [dx, dy] = T3.cutMode === 'h' ? [sy, -sx] : [sx, sy]; }
   else { let best = null, bd = Infinity; res.edges.forEach((e) => { const d = Math.abs((E - e.p1[0]) * e.n[0] + (N - e.p1[1]) * e.n[1]); if(d < bd){ bd = d; best = e; } });
     if(!best) return; [dx, dy] = T3.cutMode === 'h' ? best.u : [best.n[0], best.n[1]]; }
-  (S.extra.rcuts = S.extra.rcuts || []).push({ E: +E1.toFixed(3), N: +N1.toFixed(3), Z: +Z1.toFixed(3), dx: +dx.toFixed(4), dy: +dy.toFixed(4) });
-  T3.sel = []; complementsChanged(); hint3('Toiture coupée (clic sur la ligne + Suppr pour l\'enlever).');
+  const k = flat ? 'v' : T3.cutMode, q = roofAsk(pi, k, E, N, Z, dx, dy, `Coupe du ${flat ? 'toit plat' : 'pan ' + C.sector(pan.az)}`); if(!q) return;
+  (S.extra.rcuts = S.extra.rcuts || []).push({ E: +q.E.toFixed(3), N: +q.N.toFixed(3), Z: +q.Z.toFixed(3), dx: +dx.toFixed(4), dy: +dy.toFixed(4), pan: pi });
+  T3.sel = []; complementsChanged(); hint3('Toiture coupée — glisser la ligne pour la déplacer, double-clic pour la mesure, Suppr pour l\'enlever.');
 }
+function roofTip(pi, c, E, N, Z){
+  const res = S.res, pan = res.pans[pi], zr = res.zRefB != null ? res.zRefB : res.tRef;
+  if(rKind(pan, c.dx, c.dy) === 'h') return `cote ${Z - zr >= 0 ? '+' : ''}${(Z - zr).toFixed(2)} m / ${zeroTxt()}`;
+  const F = roofFrame(pi, c.dx, c.dy), t = E * F.m[0] + N * F.m[1]; return `${(t - F.t0).toFixed(2)} m depuis l'extrémité gauche · ${(F.t1 - t).toFixed(2)} m de la droite (pan ${pan.az != null ? C.sector(pan.az) : 'plat'}, ${fmt(F.t1 - F.t0)} m)`;
+}
+// relier une coupe verticale de façade à la toiture (droite jusqu'à la façade d'en face)
+function vRoofToggle(vi, on){ const c = (S.extra.vcuts || [])[vi]; if(!c) return; c.roof = on == null ? !c.roof : on; if(!c.roof) delete c.roof; T3.sel = []; complementsChanged();
+  hint3(c.roof ? 'Coupe verticale reliée à la toiture : la toiture est coupée dans son prolongement.' : 'Coupe verticale détachée de la toiture.'); }
 function renderVCuts(){
   const tb = $('d3-vcuts').tBodies[0], vc = S.extra.vcuts || [];
   if(vc.length) $('d3-cutbox').open = true;
   tb.innerHTML = vc.length ? vc.map((c, i) => { const f = vcInfo(c);
-    return `<tr data-v="${i}"><td>${f ? `${esc(f.e.orientation)} n°${f.edge + 1}` : '<span class="note">hors façade (bâtiment modifié)</span>'}</td><td class="n">${f ? `<input data-s type="number" step="0.01" value="${f.sLeft.toFixed(2)}" style="width:80px">` : '—'}</td><td><button type="button" class="ghost sm" data-vdel="${i}" aria-label="Supprimer">✕</button></td></tr>`; }).join('')
-    : '<tr><td colspan="3" class="note">Aucune coupe verticale.</td></tr>';
+    return `<tr data-v="${i}"><td>${f ? `${esc(f.e.orientation)} n°${f.edge + 1}` : '<span class="note">hors façade (bâtiment modifié)</span>'}</td><td class="n">${f ? `<input data-s type="number" step="0.01" value="${f.sLeft.toFixed(2)}" style="width:80px">` : '—'}</td><td><input type="checkbox" data-vroof${c.roof ? ' checked' : ''} aria-label="Prolonger sur la toiture" title="Prolonger la coupe sur la toiture, jusqu'à la façade d'en face"></td><td><button type="button" class="ghost sm" data-vdel="${i}" aria-label="Supprimer">✕</button></td></tr>`; }).join('')
+    : '<tr><td colspan="4" class="note">Aucune coupe verticale.</td></tr>';
   tb.querySelectorAll('[data-s]').forEach((el) => { el.onchange = () => { const i = +el.closest('tr').dataset.v, f = vcInfo(vc[i]), v = parseFloat(el.value); if(!f || !isFinite(v)) return;
     moveVCut(i, f, f.incR ? v : f.e.L - v); }; });
   tb.querySelectorAll('[data-vdel]').forEach((bt) => { bt.onclick = () => delVCut(+bt.dataset.vdel); });
+  tb.querySelectorAll('[data-vroof]').forEach((cb) => { cb.onchange = () => vRoofToggle(+cb.closest('tr').dataset.v, cb.checked); });
 }
 function delHCut(i){ const cs = S.extra.cuts || []; if(!cs[i]) return; hReKey(i, cs.length, 'merge'); cs.splice(i, 1); if(T3){ T3.sel = []; T3.cutSel = null; } complementsChanged(); }
 function delVCut(i){ const vc = S.extra.vcuts || [], f = vc[i] && vcInfo(vc[i]); if(!vc[i]) return;
@@ -4543,18 +4608,15 @@ function drawCuts(g, DC, P, res){
       for(let k = 0; k < GR.K; k++){ if(GR.vOff.has(`${k}|${b}`)) continue; const za = Math.max(Zb[k], r[0]), zb = Math.min(Zb[k + 1], r1); if(zb - za < 0.05) continue;
         const A = at(e, f.s, za), B = at(e, f.s, zb); line(gV(vi), A, B); T3.cutSegs.push({ t: 'v', vi, f, k, i, A, B, e, obj: gV(vi), zm: (za + zb) / 2 - zr }); } });
   });
-  // coupes de toiture : droite limitée aux parties du pan
-  (S.extra.rcuts || []).forEach((c, ri) => { const pi = C.roofPanOf(res, c); if(pi < 0) return; const m = Math.hypot(c.dx, c.dy) || 1, ux = c.dx / m, uy = c.dy / m, ts = [];
-    DC.pieces.forEach((p) => { if(p.kind !== 'toit' || p.pan !== pi || !p.rpolys) return; p.rpolys.forEach(({ mp, n, p0 }) => mp.forEach((pg) => { const r = pg[0];
-      const hits = []; for(let a = 0; a < r.length - 1; a++){ const [x1, y1] = r[a], [x2, y2] = r[a + 1], ex = x2 - x1, ey = y2 - y1, den = ux * ey - uy * ex; if(Math.abs(den) < 1e-9) continue;
-        const t = ((x1 - c.E) * ey - (y1 - c.N) * ex) / den, w = ((x1 - c.E) * uy - (y1 - c.N) * ux) / den; if(w >= -1e-6 && w <= 1 + 1e-6) hits.push(t); }
-      hits.sort((a, b) => a - b); for(let a = 0; a + 1 < hits.length; a++){ const tm = (hits[a] + hits[a + 1]) / 2; if(hits[a + 1] - hits[a] > 0.05 && inRing2(r, c.E + ux * tm, c.N + uy * tm)) ts.push([hits[a], hits[a + 1], n, p0]); } })); });
+  // coupes de toiture (posées sur un pan) et coupes verticales reliées à la toiture
+  (S.extra.rcuts || []).forEach((c, ri) => { const pi = C.roofPanOf(res, c); if(pi < 0) return; const grp = new THREE.Group(); grp.renderOrder = 5; g.add(grp);
+    roofLineSegs([pi], c.E, c.N, c.dx, c.dy).forEach(([a, b]) => { const A = v3(a), B = v3(b); line(grp, A, B); T3.cutSegs.push({ t: 'r', ri, pi, A, B, obj: grp }); }); });
+  C.roofLinks(res, S.extra).forEach((l) => { const L = Math.hypot(l.B[0] - l.A[0], l.B[1] - l.A[1]), pis = res.pans.map((p, i) => i).filter((i) => C.segHitsPan(res.pans[i], l.A, l.B));
     const grp = new THREE.Group(); grp.renderOrder = 5; g.add(grp);
-    ts.forEach(([t0, t1, n, p0]) => { const zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2], pt = (t) => { const x = c.E + ux * t, y = c.N + uy * t; return new THREE.Vector3(...P([x, y, zf(x, y) + 0.05], 0)); };
-      const A = pt(t0), B = pt(t1); line(grp, A, B); T3.cutSegs.push({ t: 'r', ri, A, B, obj: grp }); }); });
+    roofLineSegs(pis, l.A[0], l.A[1], l.B[0] - l.A[0], l.B[1] - l.A[1], [0, L]).forEach(([a, b]) => { const A = v3(a), B = v3(b); line(grp, A, B); T3.cutSegs.push({ t: 'rl', vis: l.vis, A, B, obj: grp }); }); });
   // segment sélectionné : tube bleu (Suppr : ce segment ; Maj + Suppr : toute la ligne)
   const cs = T3.cutSel; if(cs){ const tm = new THREE.MeshBasicMaterial({ color: new THREE.Color('#1c7ed6'), depthTest: false, transparent: true, opacity: 0.9 });
-    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'r' ? sg.ri === cs.i : cs.t === 'h' ? sg.ci === cs.i && sg.i === cs.edge && sg.j === cs.j : sg.vi === cs.i && sg.k === cs.k)).forEach((sg) => {
+    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'r' ? sg.ri === cs.i : cs.t === 'rl' ? sg.vis.includes(cs.i) : cs.t === 'h' ? sg.ci === cs.i && sg.i === cs.edge && sg.j === cs.j : sg.vi === cs.i && sg.k === cs.k)).forEach((sg) => {
       const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(sg.A, sg.B), 2, 0.07, 6, false), tm); m.renderOrder = 6; sg.obj.add(m); }); }
 }
 // glisser une coupe (tous les modes) : la ligne rouge la plus proche du pointeur, à moins de 8 px
@@ -4576,7 +4638,9 @@ function segNear(ev){
 }
 function dragStart(ev){
   if(ev.button !== 0) return false; const sg = segNear(ev); if(!sg) return false;
-  if(sg.t === 'r'){ T3.drag = { t: 'r', sg }; T3.ctl.enabled = false; return true; }
+  if(sg.t === 'rl'){ T3.drag = { t: 'rl', sg }; T3.ctl.enabled = false; return true; }
+  if(sg.t === 'r'){ const c = S.extra.rcuts[sg.ri], F = roofFrame(sg.pi, c.dx, c.dy), mid = sg.A.clone().lerp(sg.B, 0.5);
+    T3.drag = { t: 'r', sg, c, F, k: rKind(F.pan, c.dx, c.dy), plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -mid.y), q0: null, dd: 0, moved: false, obj: sg.obj }; T3.ctl.enabled = false; return true; }
   const e = sg.e, n = new THREE.Vector3(e.n[0], 0, -e.n[1]), plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, sg.A);
   if(sg.t === 'h'){ const cs = S.extra.cuts, ci = sg.ci;
     T3.drag = { sg, t: 'h', ci, z0: cs[ci].z, z: cs[ci].z, plane, zr: S.res.zRefB != null ? S.res.zRefB : S.res.tRef, obj: sg.obj,
@@ -4586,13 +4650,19 @@ function dragStart(ev){
 }
 function dragMove(ev){
   const d = T3 && T3.drag;
-  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : sg.t === 'r' ? 'pointer' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.winMode ? 'copy' : '';
+  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : sg.t === 'r' ? 'move' : sg.t === 'rl' ? 'pointer' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.winMode ? 'copy' : '';
       if(!sg && T3.cutMode && cutGhost(ev)) return; ghostOff();
-      if(sg && sg.t === 'r'){ hint3('Coupe de toiture — clic pour la sélectionner, puis Suppr'); T3.tipHover = true; }
+      if(sg && sg.t === 'r'){ const c = S.extra.rcuts[sg.ri]; hint3(`Coupe de toiture : ${roofTip(sg.pi, c, c.E, c.N, c.Z)} — glisser pour déplacer, double-clic pour la mesure`); T3.tipHover = true; }
+      else if(sg && sg.t === 'rl'){ hint3('Prolongement en toiture d\'une coupe verticale — clic puis Suppr pour le détacher'); T3.tipHover = true; }
       else if(sg){ const c = sg.t === 'h' ? S.extra.cuts[sg.ci] : null; hint3(c ? `Coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » : ${c.z >= 0 ? '+' : ''}${c.z.toFixed(2)} m / ${zeroTxt()} — glisser pour déplacer, double-clic pour saisir la cote`
         : `Coupe verticale ${sg.f.e.orientation} : ${sg.f.sLeft.toFixed(2)} m depuis l'angle gauche — glisser pour déplacer, double-clic pour saisir`); T3.tipHover = true; }
       else if(T3.tipHover){ T3.tipHover = false; const m = T3.cutMode; T3.cutMode = null; setCutMode(m); } } return; }
-  if(d.t === 'r') return;
+  if(d.t === 'rl') return;
+  if(d.t === 'r'){ const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return; const E = q.x + T3.o[0], N = T3.o[1] - q.z;
+    if(!d.q0){ d.q0 = [E, N]; return; } const dd = (E - d.q0[0]) * d.F.m[0] + (N - d.q0[1]) * d.F.m[1]; d.dd = dd; d.moved = Math.abs(dd) > 0.02;
+    const pan = d.F.pan, a = pan.az != null ? pan.az * Math.PI / 180 : 0, ds = pan.az != null && pan.tilt > 3 ? (d.F.m[0] * Math.sin(a) + d.F.m[1] * Math.cos(a)) * dd : 0, dz = -Math.tan((pan.tilt || 0) * Math.PI / 180) * ds;
+    d.obj.position.set(d.F.m[0] * dd, dz, -d.F.m[1] * dd); d.nE = d.c.E + d.F.m[0] * dd; d.nN = d.c.N + d.F.m[1] * dd; d.nZ = d.c.Z + dz;
+    hint3(`Coupe de toiture : ${roofTip(d.sg.pi, d.c, d.nE, d.nN, d.nZ)} — relâchez pour appliquer`); T3.render(); return; }
   const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return;
   if(d.t === 'h'){ d.z = Math.max(d.lo, Math.min(d.hi, Math.round((q.y + T3.o[2] - d.zr) * 100) / 100)); d.obj.position.y = d.z - d.z0;
     hint3(`Coupe « ${S.extra.cuts[d.ci].name || 'niveau ' + (d.ci + 2)} » : cote ${d.z >= 0 ? '+' : ''}${d.z.toFixed(2)} m — relâchez pour appliquer`); }
@@ -4606,6 +4676,12 @@ function dragMove(ev){
 function ghostOff(){ if(T3 && T3.ghost){ T3.sc.remove(T3.ghost); T3.ghost.geometry.dispose(); T3.ghost = null; T3.render(); } }
 function cutGhost(ev){
   const hit = ray3(ev).intersectObjects(T3.pick || [], false)[0], p = hit && T3.dc && T3.dc.byKey.get(hit.object.userData.key);
+  if(p && p.kind === 'toit'){ const res = S.res, o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2], pi = p.pan, pan = res.pans[pi], flat = pan.az == null || pan.tilt <= 3; let dx, dy;
+    if(!flat){ const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a); [dx, dy] = T3.cutMode === 'h' ? [sy, -sx] : [sx, sy]; }
+    else { let best = null, bd = Infinity; res.edges.forEach((e) => { const d = Math.abs((E - e.p1[0]) * e.n[0] + (N - e.p1[1]) * e.n[1]); if(d < bd){ bd = d; best = e; } }); if(!best){ ghostOff(); return false; } [dx, dy] = T3.cutMode === 'h' ? best.u : [best.n[0], best.n[1]]; }
+    ghostOff(); const segs = roofLineSegs([pi], E, N, dx, dy); if(segs.length){ const pts = []; segs.forEach(([a, b]) => pts.push(v3(a), v3(b)));
+      T3.ghost = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: 0x1c7ed6, dashSize: 0.25, gapSize: 0.15, depthTest: false, transparent: true })); T3.ghost.computeLineDistances(); T3.ghost.renderOrder = 7; T3.sc.add(T3.ghost); T3.render(); }
+    hint3(`Coupe de toiture ici : ${roofTip(pi, { dx, dy }, E, N, Z)} — clic pour poser (mesure modifiable)`); T3.tipHover = true; return true; }
   if(!p || p.kind !== 'mur'){ ghostOff(); return false; }
   const res = S.res, o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2], zr = res.zRefB != null ? res.zRefB : res.tRef;
   if(T3.cutMode === 'h'){ ghostOff(); const z = Z - zr, gb = p.edge >= 0 ? C.gableBase(res.edges[p.edge]) : Infinity;
@@ -4621,14 +4697,16 @@ function cutGhost(ev){
   T3.tipHover = true; return true;
 }
 function dragEnd(){ const d = T3 && T3.drag; if(!d) return false; T3.drag = null; T3.ctl.enabled = true; T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
-  if(d.t === 'r'){ T3.cutSel = { t: 'r', i: d.sg.ri }; T3.sel = []; T3.wsel = null; build3D(); hint3('Coupe de toiture sélectionnée — Suppr pour la supprimer · Échap : désélectionner'); return true; }
+  if(d.t === 'rl'){ T3.cutSel = { t: 'rl', i: d.sg.vis[0], vis: d.sg.vis }; T3.sel = []; T3.wsel = null; build3D(); hint3('Prolongement en toiture d\'une coupe verticale — Suppr : détacher de la toiture · Échap : désélectionner'); return true; }
+  if(d.t === 'r'){ if(d.moved){ const z = faceZ(d.sg.pi, d.nE, d.nN); Object.assign(d.c, { E: +d.nE.toFixed(3), N: +d.nN.toFixed(3), Z: +(z != null ? z : d.nZ).toFixed(3) }); T3.sel = []; complementsChanged(); hint3(''); return true; }
+    T3.cutSel = { t: 'r', i: d.sg.ri }; T3.sel = []; T3.wsel = null; build3D(); hint3(`Coupe de toiture (${roofTip(d.sg.pi, d.c, d.c.E, d.c.N, d.c.Z)}) — glisser : déplacer · double-clic : mesure · Suppr : supprimer`); return true; }
   const m = T3.cutMode; T3.cutMode = null; setCutMode(m); if(!m) hint3('');
   if(d.t === 'h' && Math.abs(d.z - d.z0) >= 0.01){ S.extra.cuts[d.ci].z = d.z; T3.sel = []; complementsChanged(); }
   if(d.t === 'v' && Math.abs(d.s - d.s0) >= 0.01) moveVCut(d.vi, d.f, d.s);
   if((d.t === 'h' && Math.abs(d.z - d.z0) < 0.01) || (d.t === 'v' && Math.abs(d.s - d.s0) < 0.01)){   // simple clic : sélection
     const sg = d.sg; T3.cutSel = { t: d.t, i: d.t === 'h' ? d.ci : d.vi, edge: sg.i, j: sg.j, k: sg.k }; T3.sel = []; T3.wsel = null; build3D();
     const n = T3.cutSegs.filter((x) => x.t === d.t && (d.t === 'h' ? x.ci === d.ci : x.vi === d.vi)).length, c = d.t === 'h' ? S.extra.cuts[d.ci] : null;
-    hint3(`${c ? `Coupe horizontale « ${c.name || 'niveau ' + (d.ci + 2)} »` : 'Coupe verticale ' + d.f.e.orientation} : ${n > 1 ? `segment sélectionné — Suppr : supprimer ce segment (les deux cases se réunissent) · Maj + Suppr : toute la ligne` : 'sélectionnée — Suppr pour la supprimer'} · Échap : désélectionner`); }
+    hint3(`${c ? `Coupe horizontale « ${c.name || 'niveau ' + (d.ci + 2)} »` : 'Coupe verticale ' + d.f.e.orientation} : ${n > 1 ? `segment sélectionné — Suppr : supprimer ce segment (les deux cases se réunissent) · Maj + Suppr : toute la ligne` : 'sélectionnée — Suppr pour la supprimer'}${d.t === 'v' ? ` · T : ${S.extra.vcuts[d.vi].roof ? 'détacher de' : 'relier à'} la toiture` : ''} · Échap : désélectionner`); }
   return true; }
 function setType(ps, t){
   S.extra.adj = S.extra.adj || {};
@@ -4934,6 +5012,7 @@ function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenet
 // Suppr dans la vue 3D : coupe sélectionnée, fenêtre sélectionnée, sinon éléments sélectionnés → hors enveloppe
 document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
   if(e.key === 'Delete' || e.key === 'Backspace'){
+    if(T3.cutSel && T3.cutSel.t === 'rl'){ e.preventDefault(); const vis = T3.cutSel.vis || [T3.cutSel.i]; T3.cutSel = null; vis.forEach((vi) => { const c = S.extra.vcuts[vi]; if(c) delete c.roof; }); T3.sel = []; complementsChanged(); hint3('Toiture détachée de la coupe verticale (Ctrl+Z pour annuler).'); return; }
     if(T3.cutSel && T3.cutSel.t === 'r'){ e.preventDefault(); const i = T3.cutSel.i; T3.cutSel = null; (S.extra.rcuts || []).splice(i, 1); T3.sel = []; complementsChanged(); hint3('Coupe de toiture supprimée (Ctrl+Z pour annuler).'); return; }
     if(T3.cutSel){ e.preventDefault(); const c = T3.cutSel; T3.cutSel = null;
       const segs = T3.cutSegs.filter((x) => x.t === c.t && (c.t === 'h' ? x.ci === c.i : x.vi === c.i)), sg = segs.find((x) => c.t === 'h' ? x.i === c.edge && x.j === c.j : x.k === c.k);
@@ -4944,6 +5023,7 @@ document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return
       if(c.t === 'h') delHCut(c.i); else delVCut(c.i); hint3('Coupe supprimée (Ctrl+Z pour annuler).'); return; }
     if(T3.wsel){ e.preventDefault(); wDelete(); return; }
     const ps = selInfo(); if(ps.length){ e.preventDefault(); setType(ps, C.OUT); T3.sel = []; hint3(`${ps.length} morceau(x) mis hors enveloppe (Ctrl+Z pour annuler).`); return; } }
+  if((e.key === 't' || e.key === 'T') && !e.ctrlKey && !e.metaKey && T3.cutSel && T3.cutSel.t === 'v'){ e.preventDefault(); const vi = T3.cutSel.i; T3.cutSel = null; vRoofToggle(vi); return; }
   if(e.key === 'Escape'){ if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); renderWinPanel(); build3D(); } else if(T3.winMode) setWinMode(false); } });
 // position façade (fraction s du repère d'élévation, bas calé sous le faîte) d'un point 3D ; accroche aux autres fenêtres
 function wPosAt(fac, E, N, zb, w, exceptUid){
