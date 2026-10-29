@@ -1150,18 +1150,18 @@ body.noscroll{overflow:hidden}
       const uz = n[2] / m;
       const tilt = (Math.acos(Math.min(1, uz)) * 180) / Math.PI;
       const az = tilt >= 3 ? azimuth(n[0], n[1]) : null;
-      roof.push({ A, tilt, az, zmin: Math.min(...zs) + dz, zmax: Math.max(...zs) + dz });
+      roof.push({ A, tilt, az, zmin: Math.min(...zs) + dz, zmax: Math.max(...zs) + dz, poly: t.map((q) => [q[0], q[1], q[2] + dz]) });
     }
     const pm = new Map();
     for (const r of roof) {
       const key = r.az == null ? 'plat' : `${(Math.round(r.az / 5) * 5) % 360}|${Math.round(r.tilt)}`;
-      const p = pm.get(key) || { A: 0, tw: 0, aw: 0, flat: r.az == null, zmin: Infinity, zmax: -Infinity };
-      p.A += r.A; p.tw += r.tilt * r.A; p.aw += (r.az || 0) * r.A;
+      const p = pm.get(key) || { A: 0, tw: 0, aw: 0, flat: r.az == null, zmin: Infinity, zmax: -Infinity, faces: [] };
+      p.faces.push(r.poly); p.A += r.A; p.tw += r.tilt * r.A; p.aw += (r.az || 0) * r.A;
       p.zmin = Math.min(p.zmin, r.zmin); p.zmax = Math.max(p.zmax, r.zmax);
       pm.set(key, p);
     }
     const pans = [...pm.values()].filter((p) => p.A > 0.05)
-      .map((p) => ({ A: p.A, tilt: p.tw / p.A, az: p.flat ? null : p.aw / p.A, zmin: p.zmin, zmax: p.zmax }))
+      .map((p) => ({ A: p.A, tilt: p.tw / p.A, az: p.flat ? null : p.aw / p.A, zmin: p.zmin, zmax: p.zmax, faces: p.faces }))
       .sort((a, c) => c.A - a.A);
     let roofDebord = 0;
     const eg = b.props.EGID;
@@ -1443,6 +1443,25 @@ body.noscroll{overflow:hidden}
     cutsE.forEach((c, ci) => c.off.forEach((q) => { const p = q && edgeAt(res, q.E, q.N); if (!p || p.i !== i) return; hOff.add(`${ci}|${vs.filter((x) => x < p.s).length}`); }));
     return { e, zr, cuts, cutsE, zG, vs, K, J, vOff, hOff, zoneOf };
   }
+  /* Coupes de toiture : S.extra.rcuts = [{ E, N, Z, dx, dy }] = droite en plan (point + direction) qui coupe le pan cliqué.
+     Le pan est retrouvé par le point (face qui le contient en plan, la plus proche en hauteur). Parties = côtés des coupes (signature 0/1). */
+  const planeZ = (f) => { const n = newell(f), p0 = f[0]; return Math.abs(n[2]) < 1e-9 ? null : { n, p0, z: (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2] }; };
+  const inRing = (r, x, y) => { let c = false; for (let a = 0, b = r.length - 1; a < r.length; b = a++) { const [xi, yi] = r[a], [xj, yj] = r[b]; if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
+  function roofPanOf(res, c) {
+    let best = -1, bd = 1.5; res.pans.forEach((p, i) => (p.faces || []).forEach((f) => { if (!inRing(f, c.E, c.N)) return; const pl = planeZ(f); if (!pl) return; const d = Math.abs(pl.z(c.E, c.N) - c.Z); if (d < bd) { bd = d; best = i; } }));
+    return best;
+  }
+  function roofSplit(res, extra, i) {
+    const p = res.pans[i], cs = ((extra && extra.rcuts) || []).filter((c) => c && isFinite(c.E) && isFinite(c.dx) && roofPanOf(res, c) === i); if (!cs.length || !p.faces) return null;
+    const big = 1e3, half = (c, sgn) => { const m = Math.hypot(c.dx, c.dy) || 1, ux = c.dx / m, uy = c.dy / m, nx = -uy * sgn, ny = ux * sgn;
+      const A = [c.E - ux * big, c.N - uy * big], B = [c.E + ux * big, c.N + uy * big]; return [[A, B, [B[0] + nx * big, B[1] + ny * big], [A[0] + nx * big, A[1] + ny * big], A]]; };
+    const H = cs.map((c) => [half(c, 1), half(c, -1)]), reg = new Map();
+    p.faces.forEach((f) => { const pl = planeZ(f); if (!pl) return; const cosT = Math.abs(pl.n[2]) / Math.hypot(...pl.n); if (cosT < 0.05) return;
+      let cur = [['', [[[...f.map((q) => [q[0], q[1]]), [f[0][0], f[0][1]]]]]]];
+      H.forEach(([hp, hm]) => { const nx = []; cur.forEach(([sg, mp]) => { [[hp, '1'], [hm, '0']].forEach(([h, b]) => { let q; try { q = PC.intersection(mp, [h]); } catch (e) { q = []; } if (q.length && mpArea(q) > 1e-4) nx.push([sg + b, q]); }); }); cur = nx; });
+      cur.forEach(([sg, mp]) => { const r = reg.get(sg) || { sig: sg, area: 0, polys: [] }; r.area += mpArea(mp) / cosT; r.polys.push({ mp, n: pl.n, p0: pl.p0 }); reg.set(sg, r); }); });
+    const out = [...reg.values()].filter((r) => r.area > 0.05).sort((a, c) => a.sig.localeCompare(c.sig)); return out.length > 1 ? out : null;
+  }
   /* base du pignon d'une façade : point bas des rampants du profil supérieur du mur (pente continue). Infinity sans pignon */
   function gableBase(e) {
     const T = (e.top || []).filter((q) => isFinite(q[1])); let best = Infinity, run = 0, sgn = 0, rmin = Infinity;
@@ -1537,7 +1556,10 @@ body.noscroll{overflow:hidden}
     });
     res.pans.forEach((p, i) => {
       const flat = p.az == null || p.tilt <= 3, key = `T|${i}`, def = combNC && !flat ? OUT : flat ? 'Toit plat / terrasse' : 'Toit en pente', o = flat ? 'Horiz' : sector(p.az);
-      P.push({ key, kind: 'toit', pan: i, orientation: o, area: p.A, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: flat ? 'Toit plat' : `Pan de toit ${o} (${fmt(p.tilt, 0)}°)` });
+      const lab0 = flat ? 'Toit plat' : `Pan de toit ${o} (${fmt(p.tilt, 0)}°)`, parts = roofSplit(res, extra, i);
+      if (!parts) { P.push({ key, kind: 'toit', pan: i, orientation: o, area: p.A, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: lab0 }); return; }
+      parts.forEach((r, k) => { const kk = `T|${i}|r${r.sig}`, zn = `partie ${k + 1}`, name = nm(kk, zn);
+        P.push({ key: kk, kind: 'toit', pan: i, orientation: o, area: r.area, def, type: adj[kk] || def, zone: name, custom: name !== zn, rpolys: r.polys, label: `${lab0} — ${name}` }); });
     });
     if (zEave != null) { const key = 'P|0', def = combNC ? 'Plafond/grenier contre non-chauffé' : OUT;
       P.push({ key, kind: 'plafond', orientation: 'Horiz', area: res.footprintArea, z: zEave, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: 'Plancher des combles (empreinte, au niveau de l\'égout)' }); }
@@ -1577,7 +1599,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { roofPanOf, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4235,7 +4257,7 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
   const winOf = new Map(), open = {};
   (S.extra.fenetres || []).forEach((f) => {
     let pc = null; const fac = (f.facade || '').replace(/^Pan /, '');
-    if(/^Pan /.test(f.facade || '')){ const pan = panFor(fac); if(pan) pc = byKey.get('T|' + res.pans.indexOf(pan)); }
+    if(/^Pan /.test(f.facade || '')){ const pan = panFor(fac); if(pan){ const pi = res.pans.indexOf(pan); pc = byKey.get('T|' + pi) || pieces.filter((q) => q.kind === 'toit' && q.pan === pi).sort((a, c) => c.area - a.area)[0] || null; } }
     else if(f.pos && fac){ const loc = locateOn(fac, f.pos.s); if(loc){ const ei = res.edges.indexOf(loc.e), zc = zAbs(fac, f.pos) + (f.h || 0) / 2;
       const cand = pieces.filter((p) => p.kind === 'mur' && p.edge === ei);
       pc = cand.find((p) => p.poly.some((pg) => pointIn(pg, loc.sl, zc))) || cand.sort((a, c) => Math.abs((a.band === 'mur' ? 0 : 1)) - Math.abs((c.band === 'mur' ? 0 : 1)) || c.area - a.area)[0] || null; } }
@@ -4315,6 +4337,10 @@ function drawDecomp(g, DC, P, b, res, ink){
     let bi = 0, bd = Infinity; res.pans.forEach((pp, i) => { const d = (pp.az == null || az == null ? (pp.az == null && az == null ? 0 : 90) : Math.abs(((pp.az - az + 540) % 360) - 180)) + Math.abs(pp.tilt - tilt); if(d < bd){ bd = d; bi = i; } });
     for(let k = 1; k < t.length - 1; k++) byPan[bi].push(P(t[0], res.dz), P(t[k], res.dz), P(t[k + 1], res.dz)); });
   byPan.forEach((tris, i) => { const p = DC.byKey.get('T|' + i); if(p && tris.length) add(tris, p); });
+  // pans découpés : parties redessinées sur le plan de chaque face
+  DC.pieces.forEach((p) => { if(p.kind !== 'toit' || !p.rpolys) return; const tris = [];
+    p.rpolys.forEach(({ mp, n, p0 }) => { const zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2]; tris.push(...tri2(mp, (x, y) => P([x, y, zf(x, y) + 0.01], 0))); });
+    if(tris.length) add(tris, p); });
   flush();
 }
 function selInfo(){ const ks = (T3 && T3.sel) || []; return ks.map((k) => T3.dc && T3.dc.byKey.get(k)).filter(Boolean); }
@@ -4398,8 +4424,8 @@ function setCutMode(m){
   if(!T3) return; T3.cutMode = T3.cutMode === m ? null : m; if(!T3.cutMode) ghostOff();
   $('d3-hcut').setAttribute('aria-pressed', T3.cutMode === 'h' ? 'true' : 'false'); $('d3-vcut').setAttribute('aria-pressed', T3.cutMode === 'v' ? 'true' : 'false');
   T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
-  $('d3-tip').textContent = T3.cutMode === 'h' ? 'Coupe horizontale : cliquez sur une façade à la hauteur voulue (toutes les façades, pignon entier) · glisser une ligne rouge pour la déplacer · Échap : terminer'
-    : T3.cutMode === 'v' ? 'Coupe verticale : cliquez sur la façade à l\'endroit du changement (accroche aux angles et aux tableaux de fenêtres) · glisser une ligne rouge pour la déplacer · Échap : terminer'
+  $('d3-tip').textContent = T3.cutMode === 'h' ? 'Coupe horizontale : cliquez sur une façade à la hauteur voulue (toutes les façades, pignon entier) ou sur un pan de toit (coupe parallèle à l\'égout) · glisser une ligne rouge pour la déplacer · Échap : terminer'
+    : T3.cutMode === 'v' ? 'Coupe verticale : cliquez sur la façade à l\'endroit du changement (accroche aux angles et aux tableaux de fenêtres) ou sur un pan de toit (coupe dans le sens de la pente) · glisser une ligne rouge pour la déplacer · Échap : terminer'
     : '';
 }
 $('d3-hcut').onclick = () => setCutMode('h'); $('d3-vcut').onclick = () => setCutMode('v');
@@ -4407,7 +4433,7 @@ document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && T3 && T3.
 const hint3 = (t) => { $('d3-tip').textContent = t; };
 const zeroTxt = () => S.res && S.res.baseRef === 'plan' ? `±0.00 du plan (${fmt(S.res.zRefB)} m)` : `point 0 = terrain moyen (${fmt(S.res.zRefB != null ? S.res.zRefB : S.res.tRef)} m)`;
 // double-clic sur une ligne rouge : saisir la cote (horizontale) ou la distance depuis l'angle gauche (verticale)
-function cutDbl(ev){ const sg = segNear(ev); if(!sg) return;
+function cutDbl(ev){ const sg = segNear(ev); if(!sg || sg.t === 'r') return;
   if(sg.t === 'h'){ const c = S.extra.cuts[sg.ci], v = prompt(`Cote de la coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » en m, par rapport au ${zeroTxt()} :`, c.z.toFixed(2)); if(v == null) return;
     const z = parseFloat(String(v).replace(',', '.')); if(!isFinite(z)) return; const cs = S.extra.cuts, lo = sg.ci > 0 ? cs[sg.ci - 1].z + 0.05 : -Infinity, hi = sg.ci < cs.length - 1 ? cs[sg.ci + 1].z - 0.05 : Infinity;
     if(z <= lo || z >= hi){ hint3('Cette cote dépasse une coupe voisine : supprimez-la ou modifiez les deux.'); return; }
@@ -4427,6 +4453,7 @@ function jambsOf(e){ const out = [];
 const snapTo = (s, list, tol) => { let b = null; list.forEach((j) => { if(Math.abs(j - s) < tol && (b == null || Math.abs(j - s) < Math.abs(b - s))) b = j; }); return b; };
 function cutAt(hit, p){
   const res = S.res, o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2];
+  if(p.kind === 'toit'){ roofCutAt(p, E, N, Z); return; }
   if(T3.cutMode === 'h'){
     if(p.kind !== 'mur'){ hint3('Coupe horizontale : cliquez sur un mur (pas la toiture).'); return; }
     if(p.edge >= 0 && Z > C.gableBase(res.edges[p.edge]) - 0.05){ hint3('Le pignon reste d\'un seul morceau : cliquez sous la base du pignon.'); return; }
@@ -4459,6 +4486,22 @@ function cutAt(hit, p){
   [[j, lo], [j + 1, hi]].forEach(([k, v]) => { const key = `V|${p.edge}|v${k}`; if(v.trim()) names[key] = v.trim(); else delete names[key]; });
   T3.sel = []; complementsChanged();
 }
+// coupe de toiture : horizontale = parallèle à l'égout (à une cote), verticale = dans le sens de la pente ; toit plat : parallèle / perpendiculaire à la façade la plus proche
+function roofCutAt(p, E, N, Z){
+  const res = S.res, pan = res.pans[p.pan], flat = pan.az == null || pan.tilt <= 3, zr = res.zRefB != null ? res.zRefB : res.tRef;
+  let dx, dy, E1 = E, N1 = N, Z1 = Z;
+  if(!flat){ const a = pan.az * Math.PI / 180, sx = Math.sin(a), sy = Math.cos(a);          // sx, sy : vers le bas de la pente (en plan)
+    if(T3.cutMode === 'h'){ dx = sy; dy = -sx;
+      const ans = prompt(`Coupe du pan ${C.sector(pan.az)} parallèle à l'égout.\nCote en m par rapport au ${zeroTxt()} — valeur cliquée, à corriger si besoin :`, (Z - zr).toFixed(2)); if(ans == null) return;
+      const zt = parseFloat(String(ans).replace(',', '.')) + zr; if(!isFinite(zt)){ hint3('Cote non valable.'); return; }
+      if(zt <= pan.zmin + 0.05 || zt >= pan.zmax - 0.05){ hint3(`Cote hors du pan (de ${fmt(pan.zmin - zr)} à ${fmt(pan.zmax - zr)} m).`); return; }
+      const d = (Z - zt) / Math.tan(pan.tilt * Math.PI / 180); E1 = E + sx * d; N1 = N + sy * d; Z1 = zt; }
+    else { dx = sx; dy = sy; } }
+  else { let best = null, bd = Infinity; res.edges.forEach((e) => { const d = Math.abs((E - e.p1[0]) * e.n[0] + (N - e.p1[1]) * e.n[1]); if(d < bd){ bd = d; best = e; } });
+    if(!best) return; [dx, dy] = T3.cutMode === 'h' ? best.u : [best.n[0], best.n[1]]; }
+  (S.extra.rcuts = S.extra.rcuts || []).push({ E: +E1.toFixed(3), N: +N1.toFixed(3), Z: +Z1.toFixed(3), dx: +dx.toFixed(4), dy: +dy.toFixed(4) });
+  T3.sel = []; complementsChanged(); hint3('Toiture coupée (clic sur la ligne + Suppr pour l\'enlever).');
+}
 function renderVCuts(){
   const tb = $('d3-vcuts').tBodies[0], vc = S.extra.vcuts || [];
   if(vc.length) $('d3-cutbox').open = true;
@@ -4479,6 +4522,7 @@ function vLimits(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j =
 function moveVCut(i, f, s){ const [lo, hi] = vLimits(f); s = Math.max(lo, Math.min(hi, s));
   S.extra.vcuts[i] = { E: +(f.e.p1[0] + f.e.u[0] * s).toFixed(3), N: +(f.e.p1[1] + f.e.u[1] * s).toFixed(3) }; T3.sel = []; complementsChanged(); }
 // lignes de coupe dans la vue 3D ; T3.cutSegs : cibles pour le glisser
+const inRing2 = (r, x, y) => { let c = false; for(let a = 0, b = r.length - 1; a < r.length; b = a++){ const [xi, yi] = r[a], [xj, yj] = r[b]; if((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
 function drawCuts(g, DC, P, res){
   T3.cutSegs = []; const acc = new THREE.Color('#d9480f'), mat = new THREE.LineBasicMaterial({ color: acc, depthTest: false, transparent: true });
   const rng = new Map(); DC.pieces.forEach((p) => { if(p.kind !== 'mur' || !(p.edge >= 0)) return; const r = rng.get(p.edge) || [Infinity, -Infinity];
@@ -4499,9 +4543,18 @@ function drawCuts(g, DC, P, res){
       for(let k = 0; k < GR.K; k++){ if(GR.vOff.has(`${k}|${b}`)) continue; const za = Math.max(Zb[k], r[0]), zb = Math.min(Zb[k + 1], r1); if(zb - za < 0.05) continue;
         const A = at(e, f.s, za), B = at(e, f.s, zb); line(gV(vi), A, B); T3.cutSegs.push({ t: 'v', vi, f, k, i, A, B, e, obj: gV(vi), zm: (za + zb) / 2 - zr }); } });
   });
+  // coupes de toiture : droite limitée aux parties du pan
+  (S.extra.rcuts || []).forEach((c, ri) => { const pi = C.roofPanOf(res, c); if(pi < 0) return; const m = Math.hypot(c.dx, c.dy) || 1, ux = c.dx / m, uy = c.dy / m, ts = [];
+    DC.pieces.forEach((p) => { if(p.kind !== 'toit' || p.pan !== pi || !p.rpolys) return; p.rpolys.forEach(({ mp, n, p0 }) => mp.forEach((pg) => { const r = pg[0];
+      const hits = []; for(let a = 0; a < r.length - 1; a++){ const [x1, y1] = r[a], [x2, y2] = r[a + 1], ex = x2 - x1, ey = y2 - y1, den = ux * ey - uy * ex; if(Math.abs(den) < 1e-9) continue;
+        const t = ((x1 - c.E) * ey - (y1 - c.N) * ex) / den, w = ((x1 - c.E) * uy - (y1 - c.N) * ux) / den; if(w >= -1e-6 && w <= 1 + 1e-6) hits.push(t); }
+      hits.sort((a, b) => a - b); for(let a = 0; a + 1 < hits.length; a++){ const tm = (hits[a] + hits[a + 1]) / 2; if(hits[a + 1] - hits[a] > 0.05 && inRing2(r, c.E + ux * tm, c.N + uy * tm)) ts.push([hits[a], hits[a + 1], n, p0]); } })); });
+    const grp = new THREE.Group(); grp.renderOrder = 5; g.add(grp);
+    ts.forEach(([t0, t1, n, p0]) => { const zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2], pt = (t) => { const x = c.E + ux * t, y = c.N + uy * t; return new THREE.Vector3(...P([x, y, zf(x, y) + 0.05], 0)); };
+      const A = pt(t0), B = pt(t1); line(grp, A, B); T3.cutSegs.push({ t: 'r', ri, A, B, obj: grp }); }); });
   // segment sélectionné : tube bleu (Suppr : ce segment ; Maj + Suppr : toute la ligne)
   const cs = T3.cutSel; if(cs){ const tm = new THREE.MeshBasicMaterial({ color: new THREE.Color('#1c7ed6'), depthTest: false, transparent: true, opacity: 0.9 });
-    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'h' ? sg.ci === cs.i && sg.i === cs.edge && sg.j === cs.j : sg.vi === cs.i && sg.k === cs.k)).forEach((sg) => {
+    T3.cutSegs.filter((sg) => sg.t === cs.t && (cs.t === 'r' ? sg.ri === cs.i : cs.t === 'h' ? sg.ci === cs.i && sg.i === cs.edge && sg.j === cs.j : sg.vi === cs.i && sg.k === cs.k)).forEach((sg) => {
       const m = new THREE.Mesh(new THREE.TubeGeometry(new THREE.LineCurve3(sg.A, sg.B), 2, 0.07, 6, false), tm); m.renderOrder = 6; sg.obj.add(m); }); }
 }
 // glisser une coupe (tous les modes) : la ligne rouge la plus proche du pointeur, à moins de 8 px
@@ -4523,6 +4576,7 @@ function segNear(ev){
 }
 function dragStart(ev){
   if(ev.button !== 0) return false; const sg = segNear(ev); if(!sg) return false;
+  if(sg.t === 'r'){ T3.drag = { t: 'r', sg }; T3.ctl.enabled = false; return true; }
   const e = sg.e, n = new THREE.Vector3(e.n[0], 0, -e.n[1]), plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, sg.A);
   if(sg.t === 'h'){ const cs = S.extra.cuts, ci = sg.ci;
     T3.drag = { sg, t: 'h', ci, z0: cs[ci].z, z: cs[ci].z, plane, zr: S.res.zRefB != null ? S.res.zRefB : S.res.tRef, obj: sg.obj,
@@ -4532,11 +4586,13 @@ function dragStart(ev){
 }
 function dragMove(ev){
   const d = T3 && T3.drag;
-  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.winMode ? 'copy' : '';
+  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : sg.t === 'r' ? 'pointer' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.winMode ? 'copy' : '';
       if(!sg && T3.cutMode && cutGhost(ev)) return; ghostOff();
-      if(sg){ const c = sg.t === 'h' ? S.extra.cuts[sg.ci] : null; hint3(c ? `Coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » : ${c.z >= 0 ? '+' : ''}${c.z.toFixed(2)} m / ${zeroTxt()} — glisser pour déplacer, double-clic pour saisir la cote`
+      if(sg && sg.t === 'r'){ hint3('Coupe de toiture — clic pour la sélectionner, puis Suppr'); T3.tipHover = true; }
+      else if(sg){ const c = sg.t === 'h' ? S.extra.cuts[sg.ci] : null; hint3(c ? `Coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » : ${c.z >= 0 ? '+' : ''}${c.z.toFixed(2)} m / ${zeroTxt()} — glisser pour déplacer, double-clic pour saisir la cote`
         : `Coupe verticale ${sg.f.e.orientation} : ${sg.f.sLeft.toFixed(2)} m depuis l'angle gauche — glisser pour déplacer, double-clic pour saisir`); T3.tipHover = true; }
       else if(T3.tipHover){ T3.tipHover = false; const m = T3.cutMode; T3.cutMode = null; setCutMode(m); } } return; }
+  if(d.t === 'r') return;
   const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return;
   if(d.t === 'h'){ d.z = Math.max(d.lo, Math.min(d.hi, Math.round((q.y + T3.o[2] - d.zr) * 100) / 100)); d.obj.position.y = d.z - d.z0;
     hint3(`Coupe « ${S.extra.cuts[d.ci].name || 'niveau ' + (d.ci + 2)} » : cote ${d.z >= 0 ? '+' : ''}${d.z.toFixed(2)} m — relâchez pour appliquer`); }
@@ -4565,6 +4621,7 @@ function cutGhost(ev){
   T3.tipHover = true; return true;
 }
 function dragEnd(){ const d = T3 && T3.drag; if(!d) return false; T3.drag = null; T3.ctl.enabled = true; T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
+  if(d.t === 'r'){ T3.cutSel = { t: 'r', i: d.sg.ri }; T3.sel = []; T3.wsel = null; build3D(); hint3('Coupe de toiture sélectionnée — Suppr pour la supprimer · Échap : désélectionner'); return true; }
   const m = T3.cutMode; T3.cutMode = null; setCutMode(m); if(!m) hint3('');
   if(d.t === 'h' && Math.abs(d.z - d.z0) >= 0.01){ S.extra.cuts[d.ci].z = d.z; T3.sel = []; complementsChanged(); }
   if(d.t === 'v' && Math.abs(d.s - d.s0) >= 0.01) moveVCut(d.vi, d.f, d.s);
@@ -4877,6 +4934,7 @@ function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenet
 // Suppr dans la vue 3D : coupe sélectionnée, fenêtre sélectionnée, sinon éléments sélectionnés → hors enveloppe
 document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return; const t = e.target; if(t && /INPUT|SELECT|TEXTAREA/.test(t.tagName)) return;
   if(e.key === 'Delete' || e.key === 'Backspace'){
+    if(T3.cutSel && T3.cutSel.t === 'r'){ e.preventDefault(); const i = T3.cutSel.i; T3.cutSel = null; (S.extra.rcuts || []).splice(i, 1); T3.sel = []; complementsChanged(); hint3('Coupe de toiture supprimée (Ctrl+Z pour annuler).'); return; }
     if(T3.cutSel){ e.preventDefault(); const c = T3.cutSel; T3.cutSel = null;
       const segs = T3.cutSegs.filter((x) => x.t === c.t && (c.t === 'h' ? x.ci === c.i : x.vi === c.i)), sg = segs.find((x) => c.t === 'h' ? x.i === c.edge && x.j === c.j : x.k === c.k);
       if(segs.length > 1 && sg && !e.shiftKey){                  // un seul segment : les deux cases voisines se réunissent
