@@ -315,6 +315,7 @@ const DEFAULT_SETTINGS = {
   societe: 'batismart SA', adresse: 'Rue des Pêcheurs 8b', npa: '1400', localite: 'Yverdon-les-Bains', tel: '+41 24 552 02 90', email: 'info@batismart.ch', web: 'www.batismart.ch',
   taux: 135, tauxThermo: 145, tva: 8.1, km: 0.7, roy: 80, royp: 190, pubMaj: 30,
   serveur: { pattern: '{dossier}', sousDossiers: '1. Doc reçus\n2. E-mails\n3. Offre\n4. Photos\n{prestation}', dossierOffre: '3. Offre', racine: '' },
+  sectionParPage: true,
   seuilZone: 30, subvInd: 1000, subvAutre: 1500, subvComPct: 50, subvComMax: 1000,
   rabaisChauffren: 5, rabaisExistant: 10, rabaisLesosai: 40,
   departs: [{ id: 'bureau', nom: 'Bureau batismart', adresse: 'Rue des Pêcheurs 8b, 1400 Yverdon-les-Bains', lat: 46.7785, lon: 6.6409 },
@@ -326,7 +327,7 @@ const DEFAULT_SETTINGS = {
     { id: 'emp-jpeggimann', nom: 'Jean-Pierre Eggimann', adresse: 'Route de la Blécherette 49, Le Mont-sur-Lausanne', lat: null, lon: null }],
   signataire: { nom: 'Nelson Fuentes', titre: 'Directeur', qualif: 'Ing. HES génie thermique, Expert CECB,\nSpécialiste en protection incendie AEAI' },
   nbIngenieurs: 6, nbExperts: 6, lastExport: null, theme: 'auto',
-  mailSignature: 'Meilleures salutations\n\nbatismart SA\nRue des Pêcheurs 8b – 1400 Yverdon-les-Bains\n+41 24 552 02 90 – info@batismart.ch',
+  mailSignature: 'Avec mes meilleures salutations.\n\nNelson Fuentes\nDirecteur\n\nIng. HES génie thermique, Expert CECB,\nSpécialiste en protection incendie AEAI\n\nbatismart SA\nRue des Pêcheurs 8b - 1400 Yverdon-les-Bains\nT. 024 552 02 99 | M. 079 682 45 79\ninfo@batismart.ch\nwww.batismart.ch',
 };
 const DEFAULT_BAREMES = {
   id: 'baremes',
@@ -348,6 +349,7 @@ const DEFAULT_BAREMES = {
   ],
   thermoCecbPlus: { villa: 260, immeuble: 520 },
   cecbMaj: { ind: 270, coll: 405, hors: 540 }, // forfait HT mise à jour CECB (hors frais de publication)
+  cecbMajTravaux: { ind: 675, coll: 945, hors: 1215 }, // mise à jour après travaux d'enveloppe (relevé complet)
   majCecbH: 5,
   en: {
     classes: [0, 251, 1001, 1501, 2001],
@@ -464,6 +466,7 @@ async function loadAll() {
   S.baremes = Object.assign(clone(DEFAULT_BAREMES), kv.find((x) => x.id === 'baremes') || {});
   const oldFH = JSON.stringify({ 'EN-VD-4': 1, 'EN-VD-5': 1, 'EN-VD-10': 0.5, 'EN-VD-11': 0.5, 'EN-VD-15': 2, 'EN-6': 1, 'EN-7': 1, 'EN-8': 1, 'EN-9': 1, 'EN-12': 1, 'EN-13': 1 });
   if (!S.baremes.cecbMaj) S.baremes.cecbMaj = clone(DEFAULT_BAREMES.cecbMaj);
+  if (!S.baremes.cecbMajTravaux) S.baremes.cecbMajTravaux = clone(DEFAULT_BAREMES.cecbMajTravaux);
   if (!S.baremes.complexite) S.baremes.complexite = clone(DEFAULT_BAREMES.complexite);
   if (!S.baremes.en.formsH || JSON.stringify(S.baremes.en.formsH) === oldFH) S.baremes.en.formsH = clone(DEFAULT_BAREMES.en.formsH);
   if (!a.length && !kv.find((x) => x.id === 'seeded')) { S.articles = clone(DEFAULT_ARTICLES); for (const x of S.articles) await DB.put('articles', x); await DB.put('kv', { id: 'seeded', v: true }); }
@@ -471,10 +474,12 @@ async function loadAll() {
   S.settings.serveur = Object.assign(clone(DEFAULT_SETTINGS.serveur), S.settings.serveur || {});
   if (['{numero}_{projet}', '{projet}'].includes(S.settings.serveur.pattern)) S.settings.serveur.pattern = '{dossier}';
   if (!S.settings.serveur.sousDossiers) { S.settings.serveur.sousDossiers = DEFAULT_SETTINGS.serveur.sousDossiers; S.settings.serveur.dossierOffre = DEFAULT_SETTINGS.serveur.dossierOffre; }
+  if (S.settings.mailSignature === 'Meilleures salutations\n\nbatismart SA\nRue des Pêcheurs 8b – 1400 Yverdon-les-Bains\n+41 24 552 02 90 – info@batismart.ch') S.settings.mailSignature = DEFAULT_SETTINGS.mailSignature;
   if (!Array.isArray(S.settings.departs) || !S.settings.departs.length) S.settings.departs = clone(DEFAULT_SETTINGS.departs);
   { const known = new Set(S.settings.departs.map((d) => d.id)), names = new Set(S.settings.departs.map((d) => (d.nom || '').toLowerCase()));
     for (const d of DEFAULT_SETTINGS.departs) if (!known.has(d.id) && !names.has(d.nom.toLowerCase())) S.settings.departs.push(clone(d)); }
   if (S.settings.bureau) { const d = S.settings.departs[0]; if (S.settings.bureau.lat) Object.assign(d, { lat: S.settings.bureau.lat, lon: S.settings.bureau.lon, adresse: S.settings.bureau.label || d.adresse }); delete S.settings.bureau; }
+  for (const o of S.offres) { if (o.projet.nomAuto !== false && o.statut === 'Brouillon' && o.batiment.adresse && o.projet.nom !== projetAuto(o)) { o.projet.nom = projetAuto(o); DB.put('offres', o); } }
   for (const o of S.offres) { if (o.projet.nomAuto == null) { o.projet.nomAuto = !o.projet.nom || /^\d{8}(-\d+)?\b/.test(o.projet.nom); applyProjetAuto(o); DB.put('offres', o); } }
   autoExpire();
 }
@@ -562,10 +567,14 @@ function splitAdresse(label) {
   const m = String(label || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*/g, ' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim().match(/^(.*?)\s+(\d{4})\s+(.+)$/);
   return m ? { rue: m[1].trim(), npa: m[2], localite: m[3].trim() } : { rue: String(label || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*/g, '').trim(), npa: '', localite: '' };
 }
+/* « Chemin du Couchant 41 » → « Couchant 41 » (type de voie et article retirés) */
+const VOIE_RE = /^(?:rue|route|rte|chemin|ch|avenue|av|boulevard|bd|impasse|imp|place|pl|all[ée]e|sentier|quai|ruelle|passage|promenade|esplanade|mont[ée]e|faubourg|square|venelle|carrefour|rond-point|cour|clos|piazza|via|vicolo|strada)\.?\s+(?:(?:du|des|de la|de l['’]|de|d['’]|à la|au|aux|la|le|les|l['’])\s*)?/i;
+function sansVoie(rue) { const r = String(rue || '').trim(), x = r.replace(VOIE_RE, '').trim(); return x ? x.charAt(0).toUpperCase() + x.slice(1) : r; }
+/* nom du projet = fin de l'adresse + localité : « Couchant 41 Granges-de-Vesin » */
 function projetAuto(o) {
   const b = o.batiment, sp = splitAdresse(b.adresse);
-  const rue = b.rue || sp.rue, loc = b.localitePost || sp.localite;
-  return [rue, loc].map((x) => String(x || '').trim()).filter(Boolean).join(' ');
+  const rue = sansVoie(b.rue || sp.rue), loc = b.localitePost || sp.localite;
+  return [rue, loc].map((x) => String(x || '').trim()).filter(Boolean).join(' ').replace(/,/g, ' ').replace(/\s+/g, ' ');
 }
 function applyProjetAuto(o) { if (o.projet.nomAuto !== false) o.projet.nom = projetAuto(o); }
 /* Trajets depuis tous les points de départ (bureau + domiciles) ; le plus proche est retenu sauf choix manuel */
@@ -676,12 +685,14 @@ function trajet(b) { const st = S.settings; const km = num(b.distanceKm), kf = k
 function cx(b) { return b.categorie === 'ind' ? 1 : (b.logements || 0) > 10 ? 2.5 : 2; }
 
 /* Mise à jour d'un CECB existant (ex. suite au remplacement du chauffage) */
+const MAJ_PAC = "l'installation d'une pompe à chaleur";
+function majMotif(op) { const m = String(op.majMotif ?? '').trim().replace(/\.$/, ''); return op.majType === 'travaux' && (!m || m === MAJ_PAC) ? 'des travaux de rénovation' : m; }
 function cecbMajSections(o) {
-  const op = o.options, motif = String(op.majMotif || '').trim().replace(/\.$/, ''), pac = /pompe à chaleur|\bPAC\b/i.test(motif), vis = op.majVisite !== false;
+  const op = o.options, motif = majMotif(op), pac = /pompe à chaleur|\bPAC\b/i.test(motif), vis = op.majVisite !== false;
   return [
     { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour effectuer la mise à jour du CECB ${op.possessif === "d'un" ? 'du' : op.possessif} bâtiment sis **${ADR(o)}**${motif ? ` suite à ${motif}` : ''}. C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
     { id: 'prest', title: 'Prestations pour la mise à jour du CECB', body: `- Reprise des données du CECB existant et regroupement des informations relatives aux modifications du bâtiment
-${vis ? '- Déplacement et visite du bâtiment pour le relevé des modifications (environ 30 min à 1h sur place)\n' : ''}- Mise à jour des données du bâtiment${pac ? ' et de la nouvelle installation de production de chaleur' : ''} dans l'outil en ligne CECB
+${vis ? `- Déplacement et visite du bâtiment pour le relevé des modifications (environ ${op.majType === 'travaux' ? '1h à 1h30' : '30 min à 1h'} sur place)\n` : ''}${op.majType === 'travaux' ? "- Mise à jour des métrés et des éléments d'enveloppe rénovés (murs, toiture, sols, fenêtres)\n" : ''}- Mise à jour des données du bâtiment${pac ? ' et de la nouvelle installation de production de chaleur' : ''} dans l'outil en ligne CECB
 - Établissement du nouveau document CECB officiel` },
     { id: 'docs', title: 'Documents à nous remettre', body: `Plusieurs documents sont nécessaires pour nous permettre de mener à bien notre mission et de vous fournir un travail de qualité.${vis ? ' Ces documents et ces informations peuvent nous être remis lors de notre visite du bâtiment.' : ''}
 
@@ -690,7 +701,7 @@ ${vis ? '- Déplacement et visite du bâtiment pour le relevé des modifications
   - nom et coordonnées du propriétaire
   - adresse de facturation si différente du propriétaire
 ${pac ? '- Protocole de mise en service et fiche technique de la nouvelle pompe à chaleur\n' : ''}- Descriptif ou factures des travaux réalisés depuis l'établissement du CECB existant
-- Plans des éventuelles parties transformées du bâtiment (si l'enveloppe a été modifiée)` },
+${op.majType === 'travaux' ? "- Plans des parties transformées et descriptif des isolants mis en œuvre (type, épaisseur)\n- Relevés des consommations depuis les travaux, si disponibles" : "- Plans des éventuelles parties transformées du bâtiment (si l'enveloppe a été modifiée)"}` },
     { id: 'devis', title: 'Devis', devis: true, pageBreak: true },
     { id: 'divers', title: 'Délais et divers', pageBreak: true, body: `- Délai de transmission du CECB mis à jour : environ ${op.delai} jours ouvrables ${vis ? 'après visite du bâtiment' : 'après réception des documents'}, sous réserve que les documents nécessaires soient fournis, ou selon entente avec notre expert. ${DELAI_STD}
 - Conditions de paiement : 30 jours après délivrance de la facture.
@@ -703,6 +714,8 @@ ${pac ? '- Protocole de mise en service et fiche technique de la nouvelle pompe 
 Notre équipe est composée de ${S.settings.nbExperts} experts CECB certifiés avec plus de 40 ans d'expérience cumulée de conseils en matière de rénovation énergétique des bâtiments. Nos clients bénéficient de nos conseils avec notre approche qui se veut totalement neutre quant aux travaux à réaliser puisque notre bureau ne vend aucune installation, ni aucune prestation pour l'exécution des éventuels travaux de rénovation.` },
   ];
 }
+/* Protection incendie : PR = projet + réalisation, P = phase projet seule (PI_P), R = phase réalisation seule (PI_R) */
+function piPhase(op) { return op.phase || (op.realisation === false ? 'P' : 'PR'); }
 const ADR = (o) => o.batiment.adresse || o.projet.adresse || '[adresse du bâtiment]';
 const CIV = (o) => o.client.civilite || 'Madame, Monsieur';
 const TEAM = (o) => `Le bureau batismart SA est composé d'une équipe de ${S.settings.nbIngenieurs} ingénieurs possédant une solide expérience dans la planification, l'inspection et la certification de bâtiment, avec près de 10'000 bâtiments certifiés à notre actif. Nos travaux et nos conseils sont totalement neutres car notre bureau ne vend aucune installation, ni aucune prestation pour l'exécution des travaux. Au travers de nos activités, nous travaillons activement avec de grands labels et associations (Minergie, ECO, CECB, SméO) et collaborons avec l'administration fédérale (OFEN, SuisseEnergie), ainsi que les administrations cantonales des cantons romands.`;
@@ -834,9 +847,10 @@ const TYPES = {
   /* ---------------------------------------------------------- CECB */
   CECB: {
     label: 'CECB / CECB Plus', fichier: (o) => ({ 'CECB Plus': 'CECB_Plus', 'Mise à jour CECB': 'CECB_MAJ' }[o.options.prestation] || 'CECB'), validite: 60,
-    defaults: { prestation: 'CECB Plus', majMotif: "l'installation d'une pompe à chaleur", majVisite: true, motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
+    defaults: { prestation: 'CECB Plus', majType: 'technique', majMotif: "l'installation d'une pompe à chaleur", majVisite: true, motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
     options: [
       { k: 'prestation', label: 'Prestation', type: 'select', opts: ['CECB', 'CECB Plus', 'Mise à jour CECB'] },
+      { k: 'majType', label: 'Type de mise à jour', type: 'select', opts: [['technique', 'Installations techniques (ex. nouvelle PAC)'], ['travaux', "Après travaux d'enveloppe (isolation, fenêtres…)"]], show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'majMotif', label: 'Mise à jour suite à', type: 'text', ph: "l'installation d'une pompe à chaleur", show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'majVisite', label: 'Visite du bâtiment', type: 'bool', show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'possessif', label: 'Formulation', type: 'select', opts: ['de votre', "d'un", 'du'] },
@@ -855,8 +869,8 @@ const TYPES = {
     build(o) {
       const b = o.batiment, op = o.options, st = S.settings, plus = op.prestation === 'CECB Plus';
       if (op.prestation === 'Mise à jour CECB') {
-        const B = blk("Devis pour la mise à jour d'un CECB", { summaryLabel: 'Mise à jour CECB' }), M = S.baremes.cecbMaj, f = num(M[b.categorie] ?? M.ind), tj = op.majVisite ? trajet(b) : { forfait: 0 };
-        B.lines.push(L(`Forfait pour la mise à jour du CECB (${catTxt(b).toLowerCase()})${op.majVisite ? ' – visite incluse' : ''}`, 1, 'forfait', f));
+        const B = blk("Devis pour la mise à jour d'un CECB", { summaryLabel: 'Mise à jour CECB' }), M = op.majType === 'travaux' ? S.baremes.cecbMajTravaux : S.baremes.cecbMaj, f = num(M[b.categorie] ?? M.ind), tj = op.majVisite ? trajet(b) : { forfait: 0 };
+        B.lines.push(L(`Forfait pour la mise à jour du CECB${op.majType === 'travaux' ? ' après travaux' : ''} (${catTxt(b).toLowerCase()})${op.majVisite ? ' – visite incluse' : ''}`, 1, 'forfait', f));
         if (tj.forfait) B.lines.push(L(`Déplacement (${fmtN(tj.km, 0)} km au-delà des ${st.seuilZone} km offerts)`, 1, 'forfait', tj.forfait));
         B.lines.push(L("Frais de publication facturé par l'association CECB", 1, 'forfait', st.pubMaj));
         addCx(o, B, f);
@@ -1070,57 +1084,73 @@ ${op.realisation === false ? "- La phase réalisation (demande de certificat dé
 
   /* ---------------------------------------------------------- Protection incendie */
   PI: {
-    label: 'Protection incendie (CFC 298.5)', fichier: 'PI', validite: 60,
-    defaults: { realisation: true, hauteurTxt: true, visites: 0, items: {}, rabaisP: false, rabaisPTxt: '', rabaisPMontant: 0, delai: 20, delaiFinal: 20, trajetVisiteIncl: true, trajetPresIncl: true, presTeams: true },
+    label: 'Protection incendie (CFC 298.5)', fichier: (o) => ({ P: 'PI_P', R: 'PI_R' }[piPhase(o.options)] || 'PI'), validite: 60,
+    defaults: { phase: 'PR', realisation: true, hauteurTxt: true, clauseAQ2: true, visites: 0, items: {}, rabaisP: false, rabaisPTxt: '', rabaisPMontant: 0, delai: 20, delaiFinal: 20, trajetVisiteIncl: true, trajetPresIncl: true, presTeams: true },
     options: [
       { k: 'hauteurTxt', label: 'Mentionner la hauteur du bâtiment (AEAI) dans l\'offre', type: 'bool' },
-      { k: 'realisation', label: 'Inclure le suivi des travaux (phase réalisation)', type: 'bool' },
-      { k: 'visites', label: 'Nombre de visites de chantier (0 = auto selon surface)', type: 'num', show: (o) => o.options.realisation !== false },
+      { k: 'clauseAQ2', label: 'Clause « classement en faible hauteur (AQ2) »', type: 'bool', show: (o) => { const hi = hauteurInfo(o.batiment); return !hi || hi.h <= 11; } },
+      { k: 'phase', label: 'Type d\'offre', type: 'select', opts: [['PR', 'Projet + réalisation (PI)'], ['P', 'Phase projet seule (PI_P)'], ['R', 'Phase réalisation seule (PI_R)']], get: (o) => piPhase(o.options) },
+      { k: 'visites', label: 'Nombre de visites de chantier (0 = auto selon surface)', type: 'num', show: (o) => piPhase(o.options) !== 'P' },
       { k: 'items', label: 'Prestations', type: 'items' },
-      { k: 'trajetVisiteIncl', label: 'Trajet visite initiale inclus', type: 'bool' },
-      { k: 'trajetPresIncl', label: 'Trajet présentation du concept inclus', type: 'bool' },
-      { k: 'presTeams', label: 'Présentation dans nos locaux ou par MS Teams', type: 'bool' },
-      { k: 'delai', label: 'Délai concept (phase enquête) [jours]', type: 'num' },
-      { k: 'delaiFinal', label: 'Délai rapport final [jours]', type: 'num' },
+      { k: 'trajetVisiteIncl', label: 'Trajet visite initiale inclus', type: 'bool', show: (o) => piPhase(o.options) !== 'R' },
+      { k: 'trajetPresIncl', label: 'Trajet présentation du concept inclus', type: 'bool', show: (o) => piPhase(o.options) !== 'R' && !o.options.presTeams },
+      { k: 'presTeams', label: 'Présentation dans nos locaux ou par MS Teams', type: 'bool', show: (o) => piPhase(o.options) !== 'R' },
+      { k: 'delai', label: 'Délai concept (phase enquête) [jours]', type: 'num', show: (o) => piPhase(o.options) !== 'R' },
+      { k: 'delaiFinal', label: 'Délai rapport final [jours]', type: 'num', show: (o) => piPhase(o.options) !== 'P' },
     ],
     build(o) {
       const b = o.batiment, op = o.options, bar = S.baremes.pi, st = S.settings, tj = trajet(b);
       const surf = b.sre || b.surfaceSol || 0;
       const n = op.visites > 0 ? op.visites : Math.max(bar.visitesMin, Math.round(surf / bar.m2ParVisite));
       const on = (it) => (op.items && op.items[it.k] != null ? op.items[it.k] : it.on);
-      const P = blk('CFC 298.5 PROTECTION INCENDIE - DEVIS PHASE PROJET', { mode: 'heures', rounding: 'mround05', summaryLabel: 'PHASE PROJET - Tarif arrondi avec TVA ' + st.tva + '%' });
+      const ph = piPhase(op), out = [];
+      const P = blk('CFC 298.5 PROTECTION INCENDIE - DEVIS PHASE PROJET', { key: 'P', mode: 'heures', rounding: 'mround05', summaryLabel: 'PHASE PROJET - Tarif arrondi avec TVA ' + st.tva + '%' });
       bar.projet.filter(on).forEach((it) => P.lines.push(H(it.label, it.auto === 'visite' ? tj.h + bar.visiteH : it.h, { group: it.phase })));
       addCx(o, P, posH(P)); if (P.lines.length && P.lines[P.lines.length - 1].cx) P.lines[P.lines.length - 1].group = 'Complexité';
-      if (op.realisation === false) return [P];
-      const R = blk('CFC 298.5 PROTECTION INCENDIE - DEVIS PHASE REALISATION', { mode: 'heures', rounding: 'mround05', summaryLabel: 'PHASE REALISATION - Tarif arrondi avec TVA ' + st.tva + '%' });
+      if (ph !== 'R') out.push(P);
+      if (ph === 'P') return out;
+      const R = blk('CFC 298.5 PROTECTION INCENDIE - DEVIS PHASE REALISATION', { key: 'R', mode: 'heures', rounding: 'mround05', summaryLabel: 'PHASE REALISATION - Tarif arrondi avec TVA ' + st.tva + '%' });
       bar.realisation.filter(on).forEach((it) => R.lines.push(H(it.label.replace('= {forfait} CHF HT + ', tj.forfait ? '= {forfait} CHF HT + ' : '= ').replace(' /h sur place', tj.forfait ? ' /h sur place' : ' /h sur place (déplacement non facturé)').replace('{forfait}', tj.forfait).replace('{taux}', st.taux).replace('{n}', n), it.auto === 'visites' ? (tj.h + bar.visiteH + bar.apresVisiteH) * n : it.h, { group: it.phase })));
-      const T = { id: uid(), kind: 'summary', title: 'CFC 298.5 PROTECTION INCENDIE - DEVIS TOTAL DES DEUX PHASES', refs: [P.id, R.id], lines: [] };
-      return [P, R, T];
+      out.push(R);
+      if (ph === 'PR') out.push({ id: uid(), key: 'T', kind: 'summary', title: 'CFC 298.5 PROTECTION INCENDIE - DEVIS TOTAL DES DEUX PHASES', refs: [P.id, R.id], lines: [] });
+      return out;
     },
-    title(o) { return `Offre n° ${o.numero} pour la création du concept${o.options.realisation === false ? '' : ' et le suivi de la réalisation des travaux'} de protection incendie CFC 298.5 – projet ${o.projet.nom || '[NomProjet]'}`; },
+    title(o) { const ph = piPhase(o.options); return `Offre n° ${o.numero} pour ${{ P: 'la création du concept de protection incendie CFC 298.5 (phase projet)', R: 'le suivi de la réalisation des travaux de protection incendie CFC 298.5 (phase réalisation)' }[ph] || 'la création du concept et le suivi de la réalisation des travaux de protection incendie CFC 298.5'} – projet ${o.projet.nom || '[NomProjet]'}`; },
     sections(o) {
-      const op = o.options, [p, r, t] = o.blocks;
+      const op = o.options, ph = piPhase(op), bk = (k, i) => o.blocks.find((x) => x.key === k) || (k === 'T' ? o.blocks.find((x) => x.kind === 'summary') : o.blocks.filter((x) => x.kind !== 'summary')[ph === 'R' ? 0 : i]);
+      const p = ph === 'R' ? null : bk('P', 0), r = ph === 'P' ? null : bk('R', 1), t = ph === 'PR' ? bk('T') : null;
       return [
-        { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour assurer le concept de protection incendie pour la phase d'enquête${op.realisation === false ? '' : ' et le suivi de réalisation des mesures de protection incendie'} du projet sis **${ADR(o)}**.${(() => { const hi = hauteurInfo(o.batiment); return hi && !hi.est && op.hauteurTxt !== false ? ` D'une hauteur totale d'environ ${fmtN(hi.h, 1)} m, le bâtiment est considéré comme un ${hauteurAEAI(hi.h)} au sens des prescriptions de protection incendie AEAI.` : ''; })()} C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
+        { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour ${{ P: "assurer le concept de protection incendie pour la phase d'enquête", R: "assurer le suivi de réalisation des mesures de protection incendie, sur la base du concept de protection incendie établi lors de la phase d'enquête," }[ph] || "assurer le concept de protection incendie pour la phase d'enquête et le suivi de réalisation des mesures de protection incendie"} du projet sis **${ADR(o)}**.${(() => { const hi = hauteurInfo(o.batiment); return hi && !hi.est && op.hauteurTxt !== false ? ` D'une hauteur totale d'environ ${fmtN(hi.h, 1)} m, le bâtiment est considéré comme un ${hauteurAEAI(hi.h)} au sens des prescriptions de protection incendie AEAI.` : ''; })()} C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
         { id: 'devp', title: 'Prestations pour la phase projet', devis: true, only: p ? [p.id] : [] },
-        { id: 'devr', title: 'Prestations pour la phase réalisation', devis: true, only: r ? [r.id] : [], pageBreak: true },
+        { id: 'devr', title: 'Prestations pour la phase réalisation', devis: true, only: r ? [r.id] : [], pageBreak: ph === 'PR' },
         { id: 'devt', title: 'Total pour les deux phases', devis: true, only: t ? [t.id] : [] },
         { id: 'docs', title: 'Documents à nous remettre', body: `Plusieurs documents sont nécessaires pour nous permettre de mener à bien notre mission et de vous fournir un travail de qualité.
 
-- Données du bâtiment (utilisation de locaux spéciaux ou risque incendie particulier le cas échéant, pré-choix de matériaux le cas échéant).
-- Plans de tous les étages, des façades et coupes du bâtiment avec indication des cotes ou imprimés à une échelle lisible et mesurable (format pdf et dwg).
-- Tous les échanges antérieurs ou ultérieurs relatifs à la protection incendie.
+${ph === 'R' ? `- Concept de protection incendie validé et autorisation de construire avec les conditions de l'autorité compétente.
+- Plans d'exécution de tous les étages, des façades et coupes du bâtiment (format pdf et dwg).` : `- Données du bâtiment (utilisation de locaux spéciaux ou risque incendie particulier le cas échéant, pré-choix de matériaux le cas échéant).
+- Plans de tous les étages, des façades et coupes du bâtiment avec indication des cotes ou imprimés à une échelle lisible et mesurable (format pdf et dwg).`}
+- Tous les échanges antérieurs ou ultérieurs relatifs à la protection incendie.${ph === 'P' ? '' : `
 - Offres validées des différentes entreprises adjudicatrices ayant un impact sur la protection incendie.
 - Planning des travaux
-- Dates des séances de chantier` },
-        { id: 'divers', title: 'Délais et divers', body: `- Délai de transmission du concept de protection incendie (phase enquête) : environ ${op.delai} jours ouvrables dès signature de l'offre, sous réserve que les documents nécessaires soient fournis, ou selon entente. ${DELAI_STD}
-${op.realisation === false ? '' : `- Délai de transmission du rapport final (phase réalisation) : ${op.delaiFinal} jours ouvrables après la dernière visite du bâtiment, sous réserve que les documents nécessaires soient fournis, ou selon entente.\n`}- Emission des factures : à la fin de chaque étape ou du trimestre passé auquel cas il s'agira d'un acompte.
-- Conditions de paiement : 30 jours après délivrance de la facture.
-- Validité de l'offre : ${o.validiteJours} jours.
-- Conditions de prestations : nos ingénieurs accrédités Spécialiste en protection AEAI (AQ2) réalisent leur mission dans l'état actuel des connaissances de la technique et des informations transmises par le mandataire et les installateurs.
-- Le présent mandat ne comprend pas d'éventuelles modifications du concept de protection incendie (après transmission de la version finale), de visites supplémentaires ou autres travaux qui ne figurent dans les prestations listées ci-dessus.${op.trajetVisiteIncl ? '\n- Le trajet pour la visite initiale du bâtiment est inclus.' : ''}${op.trajetPresIncl ? '\n- Le trajet pour la présentation du concept est inclus.' : ''}${op.presTeams ? '\n- La présentation du concept de protection incendie se déroulera dans nos locaux ou en ligne par MS Teams.' : ''}
-${op.realisation === false ? '- Le suivi des travaux (phase réalisation) n\'est pas compris dans la présente offre et pourra faire l\'objet d\'une offre séparée.' : '- Les trajets pour les visites sur chantier sont inclus' + (deplFacture(o.batiment) ? ` (les ${S.settings.seuilZone} premiers km sont offerts, seuls les ${fmtN(kmFactures(o.batiment), 0)} km supplémentaires sont facturés)` : ' (aucun frais de déplacement, les ' + S.settings.seuilZone + ' premiers km sont offerts)') + '.'}
-${op.realisation === false ? '' : "- Le devis pour le suivi des travaux peut être réévalué une fois que le concept de protection incendie de la phase d'enquête aura été accepté par l'autorité compétente. En fonction des travaux à effectuer et des exigences de l'autorité, il peut être revu pour correspondre à l'ampleur des travaux."}` },
+- Dates des séances de chantier`}` },
+        { id: 'divers', title: 'Délais et divers', body: [
+          ph !== 'R' && `- Délai de transmission du concept de protection incendie (phase enquête) : environ ${op.delai} jours ouvrables dès signature de l'offre, sous réserve que les documents nécessaires soient fournis, ou selon entente. ${DELAI_STD}`,
+          ph !== 'P' && `- Délai de transmission du rapport final (phase réalisation) : ${op.delaiFinal} jours ouvrables après la dernière visite du bâtiment, sous réserve que les documents nécessaires soient fournis, ou selon entente.${ph === 'R' ? ' ' + DELAI_STD : ''}`,
+          "- Emission des factures : à la fin de chaque étape ou du trimestre passé auquel cas il s'agira d'un acompte.",
+          '- Conditions de paiement : 30 jours après délivrance de la facture.',
+          `- Validité de l'offre : ${o.validiteJours} jours.`,
+          '- Conditions de prestations : nos ingénieurs accrédités Spécialiste en protection AEAI (AQ2) réalisent leur mission dans l\'état actuel des connaissances de la technique et des informations transmises par le mandataire et les installateurs.',
+          op.clauseAQ2 !== false && (() => { const hi = hauteurInfo(o.batiment); return !hi || hi.h <= 11; })() && "- La présente offre repose sur un classement du bâtiment en faible hauteur (AQ2), selon les informations du mandant. Si un classement en hauteur moyenne (AQ3) devait être confirmé, le mandat prendrait fin. Les prestations déjà réalisées seraient facturées et le dossier constitué serait transmis au mandant.",
+          ph === 'R' ? "- Le présent mandat ne comprend pas l'établissement ou la modification du concept de protection incendie (phase projet), de visites supplémentaires ou autres travaux qui ne figurent dans les prestations listées ci-dessus."
+            : "- Le présent mandat ne comprend pas d'éventuelles modifications du concept de protection incendie (après transmission de la version finale), de visites supplémentaires ou autres travaux qui ne figurent dans les prestations listées ci-dessus.",
+          ph !== 'R' && op.trajetVisiteIncl && '- Le trajet pour la visite initiale du bâtiment est inclus.',
+          ph !== 'R' && op.trajetPresIncl && !op.presTeams && '- Le trajet pour la présentation du concept est inclus.',
+          ph !== 'R' && op.presTeams && '- La présentation du concept de protection incendie se déroulera dans nos locaux ou en ligne par MS Teams.',
+          ph === 'P' ? "- Le suivi des travaux (phase réalisation) n'est pas compris dans la présente offre et pourra faire l'objet d'une offre séparée."
+            : '- Les trajets pour les visites sur chantier sont inclus' + (deplFacture(o.batiment) ? ` (les ${S.settings.seuilZone} premiers km sont offerts, seuls les ${fmtN(kmFactures(o.batiment), 0)} km supplémentaires sont facturés)` : ' (aucun frais de déplacement, les ' + S.settings.seuilZone + ' premiers km sont offerts)') + '.',
+          ph === 'PR' && "- Le devis pour le suivi des travaux peut être réévalué une fois que le concept de protection incendie de la phase d'enquête aura été accepté par l'autorité compétente. En fonction des travaux à effectuer et des exigences de l'autorité, il peut être revu pour correspondre à l'ampleur des travaux.",
+          ph === 'R' && "- Le nombre de visites de chantier est estimé selon l'ampleur du projet ; des visites supplémentaires peuvent être facturées au tarif indiqué dans le devis.",
+        ].filter(Boolean).join('\n') },
         { id: 'info', title: 'Informations supplémentaires', pageBreak: true, body: `Conformément à la loi, les bâtiments ne peuvent, sans autorisation spéciale, être construits, reconstruits, agrandis, transformés ou modifiés dans leur destination, les constructions et les ouvrages nécessitant des mesures particulières de protection contre les dangers d'incendie et d'explosion ainsi que contre les dommages causés par les forces de la nature.
 
 Les exigences relatives à la protection incendie se basent sur les Directives de protection incendie AEAI de 2015. Ces directives listent les mesures à prendre pour assurer la protection des personnes, des animaux et des biens contre les dangers et les effets des incendies et des explosions.
@@ -1138,7 +1168,7 @@ Numéro de certificat : 2117-S06515613
 ${TEAM(o).replace("près de 10'000 bâtiments", 'plusieurs milliers de bâtiments')}` },
       ];
     },
-    bpa(o) { const [p, r] = o.blocks; return [p && { title: `Bon pour accord – Offre n° ${o.numero} – projet ${o.projet.nom} – PHASE PROJET`, blocks: [p.id] }, r && { title: `Bon pour accord – Offre n° ${o.numero} – projet ${o.projet.nom} – PHASE REALISATION`, blocks: [r.id] }].filter(Boolean); },
+    bpa(o) { const ph = piPhase(o.options), act = o.blocks.filter((x) => x.kind !== 'summary'), p = o.blocks.find((x) => x.key === 'P') || (ph !== 'R' ? act[0] : null), r = o.blocks.find((x) => x.key === 'R') || (ph === 'R' ? act[0] : ph === 'PR' ? act[1] : null); return [p && { title: `Bon pour accord – Offre n° ${o.numero} – projet ${o.projet.nom} – PHASE PROJET`, blocks: [p.id] }, r && { title: `Bon pour accord – Offre n° ${o.numero} – projet ${o.projet.nom} – PHASE REALISATION`, blocks: [r.id] }].filter(Boolean); },
   },
 
   /* ---------------------------------------------------------- Subventions */
@@ -1416,9 +1446,10 @@ function devisTable(b, o) {
   const mk = (rows, ks, isTop, isBottom) => ({
     table: { dontBreakRows: true, widths: [58, '*', 62, 46], body: rows },
     layout: {
-      hLineWidth: (i, n) => (i === 0 ? (isTop ? 0.8 : 0) : i === n.table.body.length ? (isBottom ? 0.8 : 0.5) : (ks[i] === 'line' && (ks[i - 1] === 'line' || ks[i - 1] === 'grp')) ? 0 : 0.5),
+      hLineWidth: (i, n) => (i === 0 ? (isTop ? 0.8 : 0) : i === n.table.body.length ? (isBottom ? 0.8 : 0.5) : 0.5),
       vLineWidth: (i, n) => (i === 0 || i === n.table.widths.length ? 0.8 : 0.5),
-      hLineStyle: (i) => (i > 0 && i < ks.length && ks[i - 1] === 'tot' && ks[i] === 'tot' ? { dash: { length: 1, space: 1.5 } } : null),
+      hLineStyle: (i) => { const a = ks[i - 1], b = ks[i], pr = (k) => k === 'line' || k === 'grp'; // pointillé entre prestations et entre lignes de total
+        return i > 0 && i < ks.length && ((a === 'tot' && b === 'tot') || (pr(a) && pr(b))) ? { dash: { length: 1, space: 1.5 } } : null; },
       hLineColor: () => '#000', vLineColor: () => '#000',
       paddingLeft: () => 4, paddingRight: () => 4, paddingTop: () => 2, paddingBottom: () => 2,
     }, fontSize: 10 });
@@ -1448,9 +1479,10 @@ function estH(n) {
 }
 const SECS = new WeakMap(); // nœud → section (pour l'export Word)
 function groupSections(content) {
-  let k = 0, sec = null;
+  let k = 0, sec = null; const parPage = S.settings.sectionParPage !== false;
   for (const n of content) {
     if (!n) continue;
+    if (n.headlineLevel === 1 && parPage && k > 0) { n.pageBreak = 'before'; n.pageOrientation = 'portrait'; } // une section par page (la 1re reste sous l'introduction)
     if (n.headlineLevel === 1) { sec = { id: 'S' + (++k), nodes: [n], h: 0 }; n.id = sec.id + '-h'; SECS.set(n, sec); continue; }
     if (n._end || n.pageBreak === 'before') { sec = null; continue; }
     if (sec) { n.id = sec.id + '-' + sec.nodes.length; sec.nodes.push(n); SECS.set(n, sec); }
@@ -1702,13 +1734,8 @@ const srvSupported = () => typeof window.showDirectoryPicker === 'function';
 const srvClean = (s) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
 /* nom de dossier batismart : nom de la rue sans le type de voie + n° + localité
    « Chemin du Couchant 41, 1485 Granges-de-Vesin » → « Couchant 41 Granges-de-Vesin » */
-const VOIE_RE = /^(?:rue|route|rte|chemin|ch|avenue|av|boulevard|bd|impasse|imp|place|pl|all[ée]e|sentier|quai|ruelle|passage|promenade|esplanade|mont[ée]e|faubourg|square|venelle|carrefour|rond-point|cour|clos|piazza|via|vicolo|strada)\.?\s+(?:(?:du|des|de la|de l['’]|de|d['’]|à la|au|aux|la|le|les|l['’])\s*)?/i;
-function dossierNom(o) {
-  const b = o.batiment, sp = splitAdresse(b.adresse);
-  let rue = String(b.rue || sp.rue || '').trim(); const loc = String(b.localitePost || sp.localite || '').trim();
-  const r2 = rue.replace(VOIE_RE, ''); if (r2.trim()) rue = r2.charAt(0).toUpperCase() + r2.slice(1);
-  return [rue, loc].filter(Boolean).join(' ').replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
-}
+// VOIE_RE / sansVoie : voir core.js
+function dossierNom(o) { return projetAuto(o); }
 const PREST_DOSSIER = { CECB: (o) => 'CECB', EN: () => 'Dossier EN', MIN: () => 'Minergie', PI: () => 'Protection incendie', SUBV: () => 'Subventions', AMO: () => 'AMO', THERMO: () => 'Thermographie', CONF: () => 'Conformité' };
 function srvSegs(o, str) { const t = srvTokens(o); return String(str || '').replace(/\{(\w+)\}/g, (_, k) => (t[k] != null ? String(t[k]) : '')).split('/').map(srvClean).filter(Boolean); }
 function srvSubs(o) { return String((S.settings.serveur || {}).sousDossiers || '').split('\n').map((x) => srvSegs(o, x)).filter((x) => x.length); }
@@ -1719,7 +1746,7 @@ function srvTokens(o) {
 }
 /* « {annee}/{numero}_{projet} » → ['2026', '26101612_Rue du Lac 12 Yverdon-les-Bains'] */
 function srvPath(o) {
-  const t = srvTokens(o), pat = (S.settings.serveur && S.settings.serveur.pattern) || '{numero}_{projet}';
+  const t = srvTokens(o), pat = (S.settings.serveur && S.settings.serveur.pattern) || '{dossier}';
   return pat.split('/').map((seg) => srvClean(seg.replace(/\{(\w+)\}/g, (_, k) => (t[k] != null ? String(t[k]).replace(/,/g, '') : '')))).filter(Boolean);
 }
 async function srvHandle(ask) {
@@ -1806,6 +1833,64 @@ function dossierLibreModal() {
     m.remove(); toast('Dossier « ' + top + ' » téléchargé – à extraire puis coller sur le serveur');
   };
   inp.focus();
+}
+
+'use strict';
+/* ============================================================ e-mail d'envoi de l'offre (modèle batismart) + brouillon Outlook .eml avec le PDF joint */
+const MAIL_SUJET = {
+  CECB: (o) => ({ 'CECB Plus': 'CECB Plus', 'Mise à jour CECB': 'Mise à jour du CECB' }[o.options.prestation] || 'CECB'),
+  EN: () => 'Dossier énergétique (EN)', MIN: () => 'Dossier énergétique (EN) et Minergie',
+  PI: (o) => ({ P: 'Concept de protection incendie', R: 'Suivi des travaux de protection incendie' }[piPhase(o.options)] || 'Protection incendie (CFC 298.5)'),
+  SUBV: () => 'Gestion des subventions', AMO: () => "Assistance au maître d'ouvrage (AMO énergie)", THERMO: () => 'Étude thermographique', CONF: () => 'Contrôle de conformité', LIBRE: () => 'Offre',
+};
+const listeFr = (a) => (a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' et ' + a[a.length - 1]);
+/* phrase de résumé de la prestation, comme dans les e-mails envoyés à la main */
+function mailResume(o) {
+  const op = o.options, b = o.batiment;
+  switch (o.type) {
+    case 'CECB':
+      if (op.prestation === 'Mise à jour CECB') return `Nous vous proposons la mise à jour du CECB existant${majMotif(op) ? ' suite à ' + majMotif(op) : ''}, ${op.majVisite !== false ? 'visite du bâtiment et ' : ''}frais de publication compris.`;
+      if (op.prestation === 'CECB Plus') return `Nous vous proposons l'établissement d'un CECB Plus avec le rapport de conseils (jusqu'à 3 variantes de rénovation, estimation des coûts et des subventions)${op.subvCantonale ? ', ainsi que la gestion de la subvention cantonale qui vous est offerte' : ''}.${op.chauffren ? ' Le conseil incitatif « Chauffez-renouvelable » est également compris.' : ''}`;
+      return "Nous vous proposons l'établissement du CECB de votre bâtiment, visite et frais de publication compris.";
+    case 'EN': case 'MIN': {
+      const ren = !b.neuf && op.nature && op.nature !== 'nouvelle construction';
+      const calc = op.calcul === 'ponctuel' ? `un calcul ponctuel des valeurs U des éléments${ren ? ' rénovés' : ''} avec établissement des formulaires correspondants et repérages sur les plans`
+        : op.calcul === 'deux' ? 'un calcul ponctuel et global de l\'enveloppe avec établissement des formulaires correspondants et repérages sur les plans'
+          : 'un calcul global de l\'enveloppe (bilan thermique SIA 380/1) avec établissement des formulaires correspondants et repérages sur les plans';
+      const tech = [];
+      if (op.vd3) tech.push(ren ? 'les formulaires relatifs au chauffage et à l\'eau chaude sanitaire' : 'le formulaire chauffage et eau chaude sanitaire (EN-VD-3)');
+      if (op.vd72) tech.push('la part d\'énergie renouvelable (EN-VD-72)');
+      vdExtras(op).forEach((f) => tech.push(`le formulaire ${f.k} « ${f.t} »`));
+      return `Nous vous proposons ${calc}${tech.length ? ', ainsi que ' + listeFr(tech) : ''}.${o.type === 'MIN' ? ' L\'offre comprend également le dossier de certification Minergie.' : ''}`;
+    }
+    case 'PI': {
+      const ph = piPhase(op), hi = hauteurInfo(b), h = hi && !hi.est ? ` pour un ${hauteurAEAI(hi.h)}` : '';
+      return { P: `Nous vous proposons l'établissement du concept de protection incendie pour la phase d'enquête${h}.`, R: 'Nous vous proposons le suivi de la réalisation des mesures de protection incendie jusqu\'à la déclaration de conformité.' }[ph]
+        || `Nous vous proposons l'établissement du concept de protection incendie pour la phase d'enquête${h} ainsi que le suivi de la réalisation des mesures jusqu'à la déclaration de conformité, avec un devis séparé pour chaque phase.`;
+    }
+    case 'SUBV': return `Nous vous proposons la gestion de votre demande de subvention auprès du Programme Bâtiments (${TYPES.SUBV.mesures ? TYPES.SUBV.mesures(o) : 'M01'}).`;
+    case 'THERMO': return "Nous vous proposons une étude thermographique de votre bâtiment avec rapport commenté.";
+    default: return '';
+  }
+}
+function mailSubject(o) { return `Offre n° ${o.numero} – ${(MAIL_SUJET[o.type] || (() => TYPES[o.type].label))(o)}${o.projet.nom ? ' – ' + o.projet.nom : ''}`; }
+function mailBody(o) {
+  const res = mailResume(o), adr = o.batiment.adresse ? ` (${o.batiment.adresse.replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*$/, '')})` : '';
+  return `${o.client.civilite || 'Madame, Monsieur'},\n\nNous vous remercions de votre demande et vous prions de trouver ci-joint notre offre n° ${o.numero} concernant ${o.projet.nom ? 'le projet ' + o.projet.nom : 'votre projet'}${adr}.\n\n${res ? res + '\n\n' : ''}En espérant que notre offre vous conviendra et en restant à disposition pour toute question je vous souhaite une belle journée.\n\n${S.settings.mailSignature}`;
+}
+/* ---------- brouillon .eml (Outlook l'ouvre comme un nouveau message prêt à envoyer, PDF joint) */
+const b64utf8 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+const encWord = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64utf8(s)}?=`);
+const wrap76 = (s) => s.replace(/.{1,76}/g, '$&\r\n');
+async function emlBlob(o, to, subject, body) {
+  const pdf = new Uint8Array(await (await pdfBlob(o)).arrayBuffer()); let bin = '';
+  for (let i = 0; i < pdf.length; i += 32768) bin += String.fromCharCode(...pdf.subarray(i, i + 32768));
+  const bnd = 'batismart_' + uid(), name = pdfFileName(o);
+  const eml = [`To: ${to}`, `Subject: ${encWord(subject)}`, 'X-Unsent: 1', 'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${bnd}"`, '',
+    `--${bnd}`, 'Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '', wrap76(b64utf8(body.replace(/\r?\n/g, '\r\n'))),
+    `--${bnd}`, `Content-Type: application/pdf; name="${name}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${name}"`, '', wrap76(btoa(bin)),
+    `--${bnd}--`, ''].join('\r\n');
+  return new Blob([eml], { type: 'message/rfc822' });
 }
 
 'use strict';
@@ -2363,6 +2448,7 @@ function hauteurPanel(o) { const b = o.batiment, hi = hauteurInfo(b);
     <div><div style="font-size:26px;font-weight:700">${hi ? fmtN(hi.h, 1) + ' m' : '–'}</div><div class="note">${hi ? `${esc(hi.src)}${hi.egout ? ` · égout ≈ ${fmtN(hi.egout, 1)} m` : ''} · <b>${esc(hauteurAEAI(hi.h))}</b>` : 'Hauteur inconnue'}</div></div>
     <label class="f" style="max-width:180px">Corriger [m]<input type="number" step="any" data-type="numnull" data-bind="batiment.hauteurManuel" value="${b.hauteurManuel ?? ''}" placeholder="saisie"></label>
     ${b.lat != null && !b.neuf ? '<button class="btn" data-act="cx3d">🧊 Mesurer en 3D</button>' : ''}</div>
+    ${hi && hi.h > 11 ? `<div class="hint" style="margin-top:8px;border-color:#e0a100">⚠ ${esc(hauteurAEAI(hi.h))} : assurance qualité AQ${hi.h > 30 ? '4' : '3'} requise (nos spécialistes sont AQ2) – vérifier avant d'envoyer l'offre.</div>` : ''}
     <div class="note" style="margin-top:6px">Hauteur totale = du point le plus bas du terrain au point le plus haut de la toiture (maquette swissBUILDINGS3D). ≤ 11 m : faible hauteur · ≤ 30 m : moyenne hauteur · > 30 m : bâtiment élevé.</div></div>`; }
 async function openCx(o) {
   const b = o.batiment;
@@ -2429,7 +2515,7 @@ function tBat(o) {
 }
 function optField(o, f) {
   if (f.show && !f.show(o)) return '';
-  const v = o.options[f.k], p = `options.${f.k}`, hint = f.hint ? `<span class="note">${esc(f.hint(o))}</span>` : '';
+  const v = f.get ? f.get(o) : o.options[f.k], p = `options.${f.k}`, hint = f.hint ? `<span class="note">${esc(f.hint(o))}</span>` : '';
   if (f.type === 'bool') return `<div><label class="f chk"><input type="checkbox" data-bind="${p}" data-type="bool" ${v ? 'checked' : ''}>${esc(f.label)}</label>${hint ? `<div style="margin:2px 0 0 24px">${hint}</div>` : ''}</div>`;
   if (f.type === 'select') return `<label class="f">${esc(f.label)}<select data-bind="${p}">${f.opts.map((x) => { const [k, l] = Array.isArray(x) ? x : [x, x]; return `<option value="${esc(k)}" ${v === k ? 'selected' : ''}>${esc(l)}</option>`; }).join('')}</select></label>`;
   if (f.type === 'num') return `<label class="f">${esc(f.label)}<input type="number" step="any" data-type="num" data-bind="${p}" value="${v ?? ''}"></label>`;
@@ -2633,7 +2719,7 @@ function vBaremes() {
   ${gridEditor('Minergie – phase réalisation sans visite', 'min.sans', B.min.sans, [['label', 'Prestation'], ['h', 'Heures', 1]])}
   ${gridEditor('Thermographie (tarif thermographie)', 'thermo', B.thermo, [['label', 'Prestation'], ['h', 'Heures', 1]])}
   ${gridEditor('Contrôle de conformité', 'conf', B.conf, [['label', 'Prestation'], ['amount', 'CHF HT', 1]])}
-  <div class="card"><h2>Divers</h2><div class="grid g4"><label class="f">Dossier Minergie [h]<input type="number" step="any" data-type="num" data-bar="min.dossierMin" value="${B.min.dossierMin}"></label><label class="f">Thermo CECB Plus villa [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.villa" value="${B.thermoCecbPlus.villa}"></label><label class="f">Thermo CECB Plus immeuble [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.immeuble" value="${B.thermoCecbPlus.immeuble}"></label><label class="f">Mise à jour CECB hab. ind. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.ind" value="${B.cecbMaj.ind}"></label><label class="f">Mise à jour CECB hab. coll. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.coll" value="${B.cecbMaj.coll}"></label><label class="f">Mise à jour CECB hors habitat [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.hors" value="${B.cecbMaj.hors}"></label><label class="f">m² par visite PI<input type="number" step="any" data-type="num" data-bar="pi.m2ParVisite" value="${B.pi.m2ParVisite}"></label></div></div>
+  <div class="card"><h2>Divers</h2><div class="grid g4"><label class="f">Dossier Minergie [h]<input type="number" step="any" data-type="num" data-bar="min.dossierMin" value="${B.min.dossierMin}"></label><label class="f">Thermo CECB Plus villa [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.villa" value="${B.thermoCecbPlus.villa}"></label><label class="f">Thermo CECB Plus immeuble [CHF HT]<input type="number" step="any" data-type="num" data-bar="thermoCecbPlus.immeuble" value="${B.thermoCecbPlus.immeuble}"></label><label class="f">Mise à jour CECB hab. ind. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.ind" value="${B.cecbMaj.ind}"></label><label class="f">Mise à jour CECB hab. coll. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.coll" value="${B.cecbMaj.coll}"></label><label class="f">Mise à jour CECB hors habitat [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMaj.hors" value="${B.cecbMaj.hors}"></label><label class="f">MAJ CECB après travaux hab. ind. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMajTravaux.ind" value="${B.cecbMajTravaux.ind}"></label><label class="f">MAJ CECB après travaux hab. coll. [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMajTravaux.coll" value="${B.cecbMajTravaux.coll}"></label><label class="f">MAJ CECB après travaux hors habitat [CHF HT]<input type="number" step="any" data-type="num" data-bar="cecbMajTravaux.hors" value="${B.cecbMajTravaux.hors}"></label><label class="f">m² par visite PI<input type="number" step="any" data-type="num" data-bar="pi.m2ParVisite" value="${B.pi.m2ParVisite}"></label></div></div>
   </div>`;
 }
 
@@ -2660,6 +2746,7 @@ function vParams() {
     <div class="grid g2">${P('Nom du dossier projet (/ = sous-niveau)', 'serveur.pattern', 'text', 'placeholder="{dossier}"')}${P("Sous-dossier où enregistrer l'offre (vide = racine du projet)", 'serveur.dossierOffre', 'text', 'placeholder="ex. 01_Offre"')}
     <label class="f">Sous-dossiers à créer (un par ligne)<textarea data-set="serveur.sousDossiers" placeholder="01_Offre&#10;02_Documents client&#10;03_Calculs" style="min-height:90px">${esc(s.serveur.sousDossiers)}</textarea></label>
     <div class="note" style="align-self:end">Variables : {dossier} (rue sans « Chemin du… » + n° + localité) {prestation} (CECB, Dossier EN, Minergie, Protection incendie…) {numero} {projet} {client} {type} {annee} {aa} {mois} {localite}<br>Par défaut : <span class="mono">{dossier}</span> → <span class="mono">Couchant 41 Granges-de-Vesin</span>, <span class="mono">Platy 45 Villars-sur-Glâne</span></div></div></div>
+  <div class="card"><h2>Mise en page des offres</h2><label class="f chk"><input type="checkbox" data-set="sectionParPage" data-type="bool" ${s.sectionParPage !== false ? 'checked' : ''}>Une section par page (chaque titre commence sur une nouvelle page ; la première reste sous l'introduction)</label></div>
   <div class="card"><h2>E-mail</h2><label class="f">Signature des e-mails<textarea data-set="mailSignature">${esc(s.mailSignature)}</textarea></label></div>
   <div class="card"><h2>Données</h2><div class="note" style="margin-bottom:10px">Tout est stocké dans ce navigateur (IndexedDB). Exportez régulièrement une sauvegarde ; pour changer de poste, importez-la sur l'autre navigateur. Dernière sauvegarde : ${s.lastExport ? fmtDateTime(s.lastExport) : 'jamais'}.</div>
     <div class="row"><button class="btn pri" data-act="export">Exporter la sauvegarde (.json)</button><label class="btn">Importer une sauvegarde<input type="file" accept="application/json,.json" data-import hidden></label>
@@ -2691,19 +2778,21 @@ function previewModal(o) {
   m.querySelector('[data-dl]').onclick = () => pdfDownload(o);
 }
 function sendModal(o) {
-  const st = S.settings, T = TYPES[o.type];
-  const subj = `Offre n° ${o.numero} – ${T.label}${o.projet.nom ? ' – ' + o.projet.nom : ''}`;
-  const body = `${o.client.civilite || 'Madame, Monsieur'},\n\nNous vous remercions de votre demande et vous prions de trouver ci-joint notre offre n° ${o.numero} concernant ${o.projet.nom ? 'le projet ' + o.projet.nom : 'votre projet'}${o.batiment.adresse ? ' (' + o.batiment.adresse + ')' : ''}.\n\nPour la valider, il suffit de nous retourner le bon pour accord signé par courriel.\n\nNous restons à votre disposition pour tout renseignement complémentaire.\n\n${st.mailSignature}`;
+  const subj = mailSubject(o), body = mailBody(o);
   const m = modal(`<h2>Envoyer l'offre ${esc(o.numero)}</h2><div class="grid">
     <label class="f">Destinataire<input type="email" id="m-to" value="${esc(o.client.email)}"></label><label class="f">Objet<input type="text" id="m-subj" value="${esc(subj)}"></label>
-    <label class="f">Message<textarea id="m-body" style="min-height:220px">${esc(body)}</textarea></label>
-    <div class="note">Le PDF « ${esc(pdfFileName(o))} » est téléchargé puis votre messagerie s'ouvre avec l'objet et le message : joignez-y le fichier (un lien mailto ne peut pas joindre de pièce automatiquement). La date d'envoi est enregistrée.</div></div>
-    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" data-close>Annuler</button><button class="btn" id="m-mark">Marquer comme envoyée</button><button class="btn pri" id="m-go">Télécharger le PDF et ouvrir la messagerie</button></div>`);
+    <label class="f">Message<textarea id="m-body" style="min-height:300px">${esc(body)}</textarea></label>
+    <div class="note"><b>Brouillon Outlook</b> : télécharge un e-mail (.eml) avec le PDF « ${esc(pdfFileName(o))} » déjà joint – double-cliquez dessus, Outlook l'ouvre comme un nouveau message prêt à envoyer. La date d'envoi est enregistrée.</div></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end;flex-wrap:wrap"><button class="btn ghost" data-close>Annuler</button><button class="btn ghost" id="m-mark">Marquer comme envoyée</button><button class="btn" id="m-go">Messagerie (sans pièce jointe)</button><button class="btn pri" id="m-eml">📧 Brouillon Outlook avec PDF joint</button></div>`);
   const mark = async () => { o.envoi = { date: new Date().toISOString(), to: $('#m-to').value, subject: $('#m-subj').value };
     if (['Brouillon', 'Expirée'].includes(o.statut)) { hist(o, 'Changement de statut', `${o.statut} → Envoyée`); o.statut = 'Envoyée'; }
     hist(o, 'Envoi', `à ${o.envoi.to} – « ${o.envoi.subject} »`); await saveOffre(o); m.remove(); render(); toast('Envoi enregistré'); };
   $('#m-mark').onclick = mark;
   $('#m-go').onclick = () => { if (!pdfReady()) return; pdfDownload(o); const href = `mailto:${encodeURIComponent($('#m-to').value)}?subject=${encodeURIComponent($('#m-subj').value)}&body=${encodeURIComponent($('#m-body').value)}`; setTimeout(() => { location.href = href; }, 600); mark(); };
+  $('#m-eml').onclick = async () => { if (!pdfReady()) return;
+    try { const blob = await emlBlob(o, $('#m-to').value, $('#m-subj').value, $('#m-body').value), a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = pdfFileName(o).replace(/\.pdf$/, '.eml'); document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000); mark();
+    } catch (e) { alert('Création de l\'e-mail impossible : ' + e.message); } };
 }
 
 /* ------------------------------------------------------------ événements */
