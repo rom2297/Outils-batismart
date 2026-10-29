@@ -174,11 +174,7 @@ input[type=number]{width:90px;font-family:var(--mono);font-size:13px}
 .d3side{display:flex;flex-direction:column;gap:10px;min-width:0}
 .d3win{border:1px solid var(--accent);border-radius:var(--radius);background:var(--surface);padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px}
 .d3win:empty{display:none}
-.pal{display:flex;flex-direction:column;gap:3px;max-height:260px;overflow:auto}
-.pe{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1fr) auto;gap:5px;align-items:center;padding:3px 4px;border:1px solid transparent;border-radius:4px;cursor:pointer}
-.pe.on{border-color:var(--accent);background:var(--accent-soft)}.pe input,.pe select{min-width:0;width:100%;font-size:12.5px;padding:3px 5px}
-#d3-paint .on#pt-none,#pt-none.on{border-color:var(--accent);background:var(--accent-soft)}
-#d3-lines input.lnm{width:100%;min-width:140px;font:inherit;padding:2px 5px}.d3win .d3h{font-weight:600;display:flex;justify-content:space-between;align-items:center}.d3win select{width:100%}
+#d3-lines select.lnm{width:100%;min-width:150px;max-width:260px;font:inherit;padding:2px 4px}.d3win .d3h{font-weight:600;display:flex;justify-content:space-between;align-items:center}.d3win select{width:100%}
 @media (max-width:700px){.d3tip{max-width:calc(100% - 20px)}}
 .d3edit:empty{display:none}.d3edit .d3h{font-weight:600;display:flex;gap:8px;justify-content:space-between}.d3edit select{width:100%}
 button.sm{padding:4px 8px;font-size:12px}
@@ -330,21 +326,20 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" data-view="ori" aria-pressed="false">Orientations</button>
         <button type="button" class="tool" id="d3-hcut" aria-pressed="false" title="Clic sur une façade : coupe à cette hauteur sur toutes les façades (le pignon reste entier). Glisser une coupe pour la déplacer.">✂ Coupe horizontale</button>
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
-        <button type="button" class="tool" id="d3-paint-go" aria-pressed="false" title="Nommer et typer les parties en un clic (liste des éléments du bâtiment)">🖌 Pinceau</button>
         <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
       </div>
       <div class="v3dwrap"><div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
         <div class="d3edit" id="d3-edit" aria-live="polite"></div><div class="d3tip" id="d3-tip" aria-live="polite"></div></div>
-        <div class="d3side"><div class="d3win" id="d3-paint"></div><div class="d3win" id="d3-win"></div><aside class="legend" id="d3-legend" aria-label="Légende des couleurs"></aside></div></div>
+        <div class="d3side"><div class="d3win" id="d3-win"></div><aside class="legend" id="d3-legend" aria-label="Légende des couleurs"></aside></div></div>
       <div id="d3-side">
         <details class="cuts" id="d3-cutbox"><summary><b>Découpes des façades</b> <span class="note">— plusieurs types de façade</span></summary>
           <p class="note" style="margin:6px 0"><b>Horizontales</b> (toutes les façades, le pignon reste entier) : outil « ✂ Coupe horizontale » puis clic sur une façade, ou cote du plan (par rapport au ±0.00), en général le dessus de la dalle. Chaque partie devient un élément CECB séparé avec son propre U (onglet 5).</p>
           <p class="note" id="d3-zero" style="margin:0 0 6px"></p>
           <div class="tablewrap"><table class="edit" id="d3-cuts"><thead><tr><th>Partie</th><th class="n">Dès la cote m</th><th></th></tr></thead><tbody></tbody></table></div>
           <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="d3-cut-add">+ Niveau de découpe</button></div>
-          <p class="note" style="margin:12px 0 6px"><b>Verticales</b> (une seule façade, sur toute la hauteur sauf le pignon) : outil « ✂ Coupe verticale » puis clic sur la façade. Au survol, la distance aux deux angles s'affiche ; au clic, la distance se corrige (« d 2.40 » = depuis l'angle droit). Pour nommer les parties : outil « 🖌 Pinceau » ou directement dans le tableau des éléments.</p>
+          <p class="note" style="margin:12px 0 6px"><b>Verticales</b> (une seule façade, sur toute la hauteur sauf le pignon) : outil « ✂ Coupe verticale » puis clic sur la façade. Au survol, la distance aux deux angles s'affiche ; au clic, la distance se corrige (« d 2.40 » = depuis l'angle droit). Pour nommer les parties : liste déroulante « Nom » (clic sur la partie) ou directement dans le tableau des éléments.</p>
           <div class="tablewrap"><table class="edit" id="d3-vcuts"><thead><tr><th>Façade</th><th class="n">Depuis l'angle gauche m</th><th></th></tr></thead><tbody></tbody></table></div>
         </details>
         <h3 style="margin:16px 0 6px">Éléments CECB</h3>
@@ -3887,7 +3882,7 @@ function build3D(){
       (hasOut ? `<div><span class="dot" style="background:${OUT_COL}"></span>Hors enveloppe</div>` : '') +
       `<div><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin} · <span class="dot" style="background:#2f7d3a;height:3px"></span>Ligne de terre</div>`;
     T3.lg.querySelectorAll('[data-lg]').forEach((b) => { b.onclick = () => { T3.sel = DC.groups[+b.dataset.lg].lines.flatMap((l) => l.keys); build3D(); }; });
-    renderDecomp(); if(T3.paintMode) renderPaint(); T3.render(); return; }
+    renderDecomp(); T3.render(); return; }
   T3.lg.classList.remove('elems'); T3.lg.innerHTML = present.map((o) => `<span><span class="dot" style="background:${ocol(o)}"></span>${o}</span>`).join('') +
     `<span><span class="dot" style="background:#8f6a5a"></span>Toiture</span><span><span class="dot" style="background:var(--nb-line)"></span>Voisins</span>` +
     `<span><span class="dot" style="background:#bfe1f5;outline:1px solid var(--line)"></span>Fenêtres ${T3.nWin}${T3.nOff ? ` <span style="color:var(--muted)">(${T3.nOff} non affichée(s) : sans repère façade ou au-dessus de l'égout)</span>` : ''}</span>`;
@@ -4333,15 +4328,14 @@ function renderDecomp(){
     const cur = ps.every((p) => p.type === ps[0].type) ? ps[0].type : '';
     const ln1 = DC.lineOf.get(ps[0].key), oneLine = ln1 && ps.length === ln1.keys.length && ps.every((p) => DC.lineOf.get(p.key) === ln1);
     box.innerHTML = `<div class="d3h">${oneLine ? `<span class="mono">${esc(ln1.code)}</span> ${esc(ln1.name)}${ps.length > 1 ? ` <span class="note">(${ps.length} morceaux)</span>` : ''}` : ps.length === 1 ? esc(ps[0].label) : ps.length + ' éléments'} <span class="mono">${fmt(A)} m²</span></div>
-      <label for="d3-name">Nom de la partie <span class="note">(regroupe les morceaux de même nom, type et orientation)</span></label><input id="d3-name" value="${esc(ps.every((p) => p.zone === ps[0].zone) ? ps[0].zone || '' : '')}" placeholder="${ps.every((p) => p.zone === ps[0].zone) ? 'sans nom' : '— plusieurs —'}" style="width:100%;margin-bottom:6px">
+      <label for="d3-name">Nom <span class="note">(même nom + même type + même orientation = une ligne CECB)</span></label>${nameSel(ps[0].zone, 'id="d3-name" style="width:100%;margin-bottom:6px"', !ps.every((p) => p.zone === ps[0].zone))}
       ${same ? `<label for="d3-type">Type CECB</label><select id="d3-type">${cur ? '' : '<option selected disabled>— plusieurs —</option>'}${opt(C.TYPES[ps[0].kind], cur)}</select>` : '<div class="note">Sélection mixte (murs / toits / sols) : choisissez des éléments du même genre.</div>'}
       <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
         ${ps.length === 1 && ps[0].kind === 'mur' ? `<button type="button" class="ghost sm" id="d3-all">Toute la façade ${esc(ps[0].orientation)} (même partie)</button>` : ''}
         ${ps.length === 1 && ps[0].zone ? `<button type="button" class="ghost sm" id="d3-zone">Tous les murs « ${esc(ps[0].zone)} »</button>` : ''}
         <button type="button" class="ghost sm" id="d3-def">Type par défaut</button><button type="button" class="ghost sm" id="d3-clear">Désélectionner</button></div>`;
     if($('d3-type')) $('d3-type').onchange = (e) => setType(ps, e.target.value);
-    $('d3-name').onchange = (e) => { const v = e.target.value.trim(), N = S.extra.names = S.extra.names || {};
-      ps.forEach((p) => { const k = C.nameKey(p.key); if(v) N[k] = v; else delete N[k]; }); complementsChanged(); };
+    $('d3-name').onchange = (e) => applyName(ps.map((p) => p.key), e.target.value);
     if($('d3-all')) $('d3-all').onclick = () => { const p = ps[0]; T3.sel = DC.pieces.filter((q) => q.kind === 'mur' && q.orientation === p.orientation && q.band === p.band && q.ter === p.ter && q.zone === p.zone).map((q) => q.key); build3D(); };
     if($('d3-zone')) $('d3-zone').onclick = () => { const z = ps[0].zone; T3.sel = DC.pieces.filter((q) => q.kind === 'mur' && q.zone === z).map((q) => q.key); build3D(); };
     $('d3-def').onclick = () => { ps.forEach((p) => { delete (S.extra.adj || {})[p.key]; }); complementsChanged(); };
@@ -4352,7 +4346,7 @@ function renderDecomp(){
   // tableau des lignes CECB
   const tb = $('d3-lines').tBodies[0], tot = { g: 0, o: 0, n: 0 };
   tb.innerHTML = DC.lines.map((l, i) => { tot.g += l.gross; tot.o += l.open; tot.n += l.net; const on = l.keys.some((k) => (T3.sel || []).includes(k));
-    return `<tr data-l="${i}" class="${on ? 'on' : ''}"><td class="mono" style="white-space:nowrap"><span class="dot" style="background:${l.col}"></span> ${l.code}</td><td><input class="lnm" data-l="${i}" value="${esc(l.zone || '')}" placeholder="${esc(l.name)}" title="${esc(l.name)} — renommer : toutes les parties de cette ligne" aria-label="Nom ${l.code}"></td><td> ${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.gross)}</td><td class="n">${l.open ? fmt(l.open) : '—'}</td><td class="n"><b>${fmt(l.net)}</b></td></tr>`; }).join('');
+    return `<tr data-l="${i}" class="${on ? 'on' : ''}"><td class="mono" style="white-space:nowrap"><span class="dot" style="background:${l.col}"></span> ${l.code}</td><td title="${esc(l.name)}">${nameSel(l.zone, `class="lnm" data-l="${i}" aria-label="Nom ${l.code}"`)}</td><td> ${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.gross)}</td><td class="n">${l.open ? fmt(l.open) : '—'}</td><td class="n"><b>${fmt(l.net)}</b></td></tr>`; }).join('');
   $('d3-tot').innerHTML = `<td colspan="4">Enveloppe thermique (${DC.lines.length} éléments${DC.pieces.some((p) => p.type === C.OUT) ? ', hors enveloppe exclus' : ''})</td><td class="n">${fmt(tot.g)}</td><td class="n">${fmt(tot.o)}</td><td class="n"><b>${fmt(tot.n)}</b></td>`;
   const nw = DC.wins.filter((w) => !w.out).length, no = DC.wins.length - nw;
   $('d3-wins').textContent = DC.wins.length ? `${nw} ouverture(s) rattachée(s) à leur élément parent${no ? `, ${no} hors enveloppe` : ''} — surfaces déduites dans la colonne « Ouvertures ».` : 'Aucune ouverture saisie (onglet Plans ou Compléments).';
@@ -4401,7 +4395,7 @@ function vcInfo(c){ const res = S.res; let bi = -1, bd = 0.6, bs = 0;
   return { edge: bi, e, s: bs, incR, sLeft: incR ? bs : e.L - bs }; }
 const TIP0 = 'Glisser une ligne rouge pour déplacer la coupe';
 function setCutMode(m){
-  if(!T3) return; T3.cutMode = T3.cutMode === m ? null : m; if(T3.cutMode && T3.paintMode) setPaintMode(false); if(!T3.cutMode) ghostOff();
+  if(!T3) return; T3.cutMode = T3.cutMode === m ? null : m; if(!T3.cutMode) ghostOff();
   $('d3-hcut').setAttribute('aria-pressed', T3.cutMode === 'h' ? 'true' : 'false'); $('d3-vcut').setAttribute('aria-pressed', T3.cutMode === 'v' ? 'true' : 'false');
   T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
   $('d3-tip').textContent = T3.cutMode === 'h' ? 'Coupe horizontale : cliquez sur une façade à la hauteur voulue (toutes les façades, pignon entier) · glisser une ligne rouge pour la déplacer · Échap : terminer'
@@ -4538,7 +4532,7 @@ function dragStart(ev){
 }
 function dragMove(ev){
   const d = T3 && T3.drag;
-  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.paintMode ? 'cell' : T3.winMode ? 'copy' : '';
+  if(!d){ if(T3 && !ev.buttons){ const sg = segNear(ev); T3.r.domElement.style.cursor = sg ? (sg.t === 'h' ? 'ns-resize' : 'ew-resize') : T3.cutMode ? 'crosshair' : T3.winMode ? 'copy' : '';
       if(!sg && T3.cutMode && cutGhost(ev)) return; ghostOff();
       if(sg){ const c = sg.t === 'h' ? S.extra.cuts[sg.ci] : null; hint3(c ? `Coupe « ${c.name || 'niveau ' + (sg.ci + 2)} » : ${c.z >= 0 ? '+' : ''}${c.z.toFixed(2)} m / ${zeroTxt()} — glisser pour déplacer, double-clic pour saisir la cote`
         : `Coupe verticale ${sg.f.e.orientation} : ${sg.f.sLeft.toFixed(2)} m depuis l'angle gauche — glisser pour déplacer, double-clic pour saisir`); T3.tipHover = true; }
@@ -4783,7 +4777,7 @@ function bAutoAll(DC){                           // calcule b là où il n'est p
 function renderOcc(){ const o = TH().occ || {}; document.querySelectorAll('#c-occ input[data-k]').forEach((i) => { if(document.activeElement !== i) i.value = o[i.dataset.k] ?? ''; });
   const rb = S.meta && S.meta.regbl; $('c-occ-hint').textContent = rb && rb.logements != null ? `RegBL : ${rb.logements} logement(s).` : ''; }
 $('c-occ').addEventListener('change', (e) => { const i = e.target.closest('input[data-k]'); if(!i) return; const o = TH().occ = TH().occ || {}; const v = numIn(i.value); if(v == null) delete o[i.dataset.k]; else o[i.dataset.k] = v; });
-$('d3-lines').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-l]'); if(!tr || !T3 || !T3.dc || e.target.closest('input')) return; T3.sel = T3.dc.lines[+tr.dataset.l].keys.slice(); build3D(); });
+$('d3-lines').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-l]'); if(!tr || !T3 || !T3.dc || e.target.closest('input,select')) return; T3.sel = T3.dc.lines[+tr.dataset.l].keys.slice(); build3D(); });
 document.querySelectorAll('[data-view]').forEach((bt) => bt.addEventListener('click', () => {
   if(!T3) return; T3.view = bt.dataset.view; document.querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', x === bt ? 'true' : 'false'));
   $('d3-side').hidden = $('d3-edit').hidden = T3.view === 'ori'; build3D();
@@ -4794,7 +4788,6 @@ function pick3D(ev){
   const rc = new THREE.Raycaster(); rc.setFromCamera(v, T3.cam);
   const hit = rc.intersectObjects(T3.pick, false)[0], k = hit && hit.object.userData.key;
   if(T3.cutMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) cutAt(hit, p); return; }
-  if(T3.paintMode){ if(k) paintAt(k, ev); return; }
   const wh = T3.winPick && rc.intersectObjects(T3.winPick, false)[0];
   if(wh && (!hit || wh.distance <= hit.distance + 0.1)){ T3.wsel = wh.object.userData.win; T3.sel = []; T3.cutSel = null; renderWinPanel(); build3D();
     const f = (S.extra.fenetres || []).find((x) => x.uid === T3.wsel); if(f) hint3(`${f.type === 'Porte' ? 'Porte' : 'Fenêtre'} ${f.typeId || ''} ${fmt(f.l)} × ${fmt(f.h)} m (${f.facade}) sélectionnée — Suppr pour la supprimer${T3.winMode ? ', glisser pour la déplacer' : ''}`); return; }
@@ -4860,7 +4853,7 @@ $('qw-3d-go').onclick = () => { showTab('t-3d'); setTimeout(() => { if(T3 && !T3
 
 // ---- pose / déplacement / duplication dans la 3D
 function setWinMode(on){
-  if(!T3) return; T3.winMode = on; if(on && T3.cutMode) setCutMode(T3.cutMode); if(on && T3.paintMode) setPaintMode(false);
+  if(!T3) return; T3.winMode = on; if(on && T3.cutMode) setCutMode(T3.cutMode);
   $('d3-wmode').setAttribute('aria-pressed', on ? 'true' : 'false'); T3.r.domElement.style.cursor = on ? 'copy' : '';
   if(on && !WT().some((t) => t.kind === 'Fenêtre')) { wtNew('Fenêtre', 1.2, 1.4); wSync(); }
   if(!on){ T3.wsel = null; } renderWinPanel(); build3D();
@@ -4893,7 +4886,6 @@ document.addEventListener('keydown', (e) => { if(!T3 || $('t-3d').hidden) return
       if(c.t === 'h') delHCut(c.i); else delVCut(c.i); hint3('Coupe supprimée (Ctrl+Z pour annuler).'); return; }
     if(T3.wsel){ e.preventDefault(); wDelete(); return; }
     const ps = selInfo(); if(ps.length){ e.preventDefault(); setType(ps, C.OUT); T3.sel = []; hint3(`${ps.length} morceau(x) mis hors enveloppe (Ctrl+Z pour annuler).`); return; } }
-  if(e.key === 'Escape' && T3.paintMode){ setPaintMode(false); return; }
   if(e.key === 'Escape'){ if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); renderWinPanel(); build3D(); } else if(T3.winMode) setWinMode(false); } });
 // position façade (fraction s du repère d'élévation, bas calé sous le faîte) d'un point 3D ; accroche aux autres fenêtres
 function wPosAt(fac, E, N, zb, w, exceptUid){
@@ -4936,60 +4928,22 @@ function wDragEnd(){ const d = T3 && T3.wdrag; if(!d) return false; T3.wdrag = n
   hint3(''); renderWinPanel(); wChanged(); return true; }
 $('d3-wmode').onclick = () => setWinMode(!(T3 && T3.winMode));
 
-// ============================================================ pinceau : nommer et typer les parties en un clic
-/* S.extra.palette = [{ id, name, type }] : liste des éléments du bâtiment (p. ex. « Bardage bois » / Mur extérieur).
-   Mode pinceau : on choisit un élément, puis chaque clic sur une partie lui donne ce nom (et ce type) ;
-   Ctrl + clic : tout l'élément CECB cliqué. Même nom + même type + même orientation = une seule ligne CECB. */
+// ============================================================ noms des parties : liste déroulante
+/* Liste des noms du bâtiment (S.extra.palette) + noms déjà utilisés. Choisir un nom regroupe les parties :
+   même nom + même type + même orientation = une seule ligne CECB. « + Nouveau nom… » l'ajoute à la liste. */
 const PAL = () => (S.extra.palette = S.extra.palette || []);
-const ALL_T = () => [['Murs', C.TYPES.mur], ['Toits et plafonds', C.TYPES.toit], ['Sols', C.TYPES.sol]];
-const typeOpts = (cur) => `<option value=""${cur ? '' : ' selected'}>(garder le type)</option>` + ALL_T().map(([g, ts]) => `<optgroup label="${g}">${ts.filter((t) => t !== C.OUT).map((t) => `<option${t === cur ? ' selected' : ''}>${esc(t)}</option>`).join('')}</optgroup>`).join('') + `<option${cur === C.OUT ? ' selected' : ''}>${C.OUT}</option>`;
-function setPaintMode(on){
-  if(!T3) return; T3.paintMode = on;
-  if(on){ if(T3.cutMode) setCutMode(T3.cutMode); if(T3.winMode) setWinMode(false);
-    if(!PAL().length){                          // première ouverture : noms déjà utilisés (niveaux, bandes, noms saisis)
-      const seen = new Set(); [S.extra.cutBase, ...(S.extra.cuts || []).map((c) => c.name), ...Object.values(S.extra.names || {})].forEach((n) => { n = (n || '').trim(); if(n && !seen.has(n)){ seen.add(n); PAL().push({ id: uid(), name: n, type: '' }); } }); }
-    if(!T3.paintId && PAL().length) T3.paintId = PAL()[0].id; }
-  $('d3-paint-go').setAttribute('aria-pressed', on ? 'true' : 'false'); T3.r.domElement.style.cursor = on ? 'cell' : '';
-  renderPaint(); hint3(on ? 'Pinceau : choisissez un élément à droite, puis cliquez les parties (Ctrl + clic : tout l\'élément CECB) · Échap : terminer' : '');
+function nameList(){
+  const seen = new Set(), out = [], add = (n) => { n = (n || '').trim(); if(n && !seen.has(n)){ seen.add(n); out.push(n); } };
+  PAL().forEach((p) => add(p.name)); Object.values(S.extra.names || {}).forEach(add); add(S.extra.cutBase); (S.extra.cuts || []).forEach((c) => add(c.name));
+  ((T3 && T3.dc && T3.dc.lines) || []).forEach((l) => add(l.zone)); return out;
 }
-function renderPaint(){
-  const box = $('d3-paint'); if(!T3 || !T3.paintMode){ box.innerHTML = ''; return; }
-  const DC = T3.dc, col = (n) => { const l = DC && DC.lines.find((x) => x.zone === n); return l ? l.col : 'var(--line)'; };
-  box.innerHTML = `<div class="d3h">Pinceau — éléments <button type="button" class="ghost sm" id="pt-end">Terminer</button></div>
-    <div class="pal">${PAL().map((p) => `<div class="pe${p.id === T3.paintId ? ' on' : ''}" data-pid="${p.id}"><span class="dot" style="background:${col(p.name)}"></span>
-      <input value="${esc(p.name)}" data-pk="name" aria-label="Nom"><select data-pk="type" aria-label="Type CECB">${typeOpts(p.type)}</select><button type="button" class="x" data-pdel="${p.id}" title="Retirer de la liste">×</button></div>`).join('')
-      || '<p class="note" style="margin:0">Ajoutez les types de façade du bâtiment (p. ex. « Crépi isolé », « Bardage bois », « Mur sous-sol »).</p>'}</div>
-    <div class="row" style="gap:6px;margin-top:6px"><input id="pt-new" placeholder="Nouvel élément…" style="flex:1" aria-label="Nom du nouvel élément"><button type="button" class="ghost sm" id="pt-add">+</button></div>
-    <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="ghost sm${T3.paintId === '_none' ? ' on' : ''}" id="pt-none" title="Efface le nom : la partie reprend son nom par défaut">Gomme (sans nom)</button></div>
-    <p class="note" style="margin:6px 0 0">Clic : une partie · Ctrl + clic : tout l'élément CECB · le type n'est appliqué que s'il correspond (mur, toit, sol).</p>`;
-  box.querySelectorAll('.pe').forEach((d) => d.addEventListener('click', (e) => { if(e.target.closest('input,select,button')) return; T3.paintId = d.dataset.pid; renderPaint(); }));
-  box.querySelectorAll('.pe input, .pe select').forEach((el) => { el.addEventListener('focus', () => { T3.paintId = el.closest('.pe').dataset.pid; box.querySelectorAll('.pe').forEach((d) => d.classList.toggle('on', d.dataset.pid === T3.paintId)); });
-    el.addEventListener('change', () => { const p = PAL().find((x) => x.id === el.closest('.pe').dataset.pid); if(!p) return;
-      if(el.dataset.pk === 'name'){ const old = p.name, v = el.value.trim(); if(!v) return; p.name = v;        // renommer partout
-        const N = S.extra.names || {}; Object.keys(N).forEach((k) => { if(N[k] === old) N[k] = v; }); if(S.extra.cutBase === old) S.extra.cutBase = v; (S.extra.cuts || []).forEach((c) => { if(c.name === old) c.name = v; }); complementsChanged(); }
-      else { p.type = el.value; } }); });
-  box.querySelectorAll('[data-pdel]').forEach((b) => { b.onclick = () => { S.extra.palette = PAL().filter((x) => x.id !== b.dataset.pdel); if(T3.paintId === b.dataset.pdel) T3.paintId = (PAL()[0] || {}).id; renderPaint(); undoLater(); }; });
-  const add = () => { const v = $('pt-new').value.trim(); if(!v) return; const p = { id: uid(), name: v, type: '' }; PAL().push(p); T3.paintId = p.id; renderPaint(); undoLater(); setTimeout(() => { const s = box.querySelector(`.pe[data-pid="${p.id}"] select`); if(s) s.focus(); }, 0); };
-  $('pt-add').onclick = add; $('pt-new').onkeydown = (e) => { if(e.key === 'Enter'){ e.preventDefault(); add(); } };
-  $('pt-none').onclick = () => { T3.paintId = '_none'; renderPaint(); };
-  $('pt-end').onclick = () => setPaintMode(false);
+const nameSel = (cur, attrs, multi) => `<select ${attrs}>${multi ? '<option value="" selected disabled>— plusieurs —</option>' : ''}<option value="__def"${!multi && !cur ? ' selected' : ''}>(nom par défaut)</option>${nameList().map((n) => `<option${!multi && n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')}<option value="__new">+ Nouveau nom…</option></select>`;
+function applyName(keys, v){                     // v : nom choisi, '__def' (défaut) ou '__new'
+  if(v === '__new'){ const n = prompt('Nouveau nom (p. ex. « Bardage bois », « Crépi isolé », « Mur sous-sol ») :', ''); if(n == null || !n.trim()) { renderDecomp(); return; } v = n.trim(); }
+  if(v && v !== '__def' && !PAL().some((x) => x.name === v)) PAL().push({ id: uid(), name: v, type: '' });
+  const N = S.extra.names = S.extra.names || {}; keys.forEach((k) => { const nk = C.nameKey(k); if(v && v !== '__def') N[nk] = v; else delete N[nk]; }); complementsChanged();
 }
-function paintAt(k, ev){
-  const DC = T3.dc, p0 = DC && DC.byKey.get(k); if(!p0) return;
-  const ent = T3.paintId === '_none' ? null : PAL().find((x) => x.id === T3.paintId); if(T3.paintId !== '_none' && !ent){ hint3('Choisissez d\'abord un élément dans la liste à droite.'); return; }
-  const ln = DC.lineOf.get(k), ks = (ev.ctrlKey || ev.metaKey) && ln ? ln.keys.slice() : [k], N = S.extra.names = S.extra.names || {}, A = S.extra.adj = S.extra.adj || {};
-  let nt = 0; ks.forEach((kk) => { const q = DC.byKey.get(kk); if(!q) return; const nk = C.nameKey(kk);
-    if(ent) N[nk] = ent.name; else delete N[nk];
-    if(ent && ent.type && (C.TYPES[q.kind] || []).includes(ent.type)){ if(ent.type === q.def) delete A[kk]; else A[kk] = ent.type; nt++; } });
-  T3.sel = []; complementsChanged();
-  hint3(`${ks.length} partie(s) ${ent ? `→ « ${ent.name} »${ent.type ? (nt ? ` (${ent.type})` : ' — type non applicable à cet élément') : ''}` : '→ nom par défaut'} · Ctrl+Z pour annuler`);
-}
-$('d3-paint-go').onclick = () => setPaintMode(!(T3 && T3.paintMode));
-// renommer une ligne CECB directement dans le tableau
-$('d3-lines').addEventListener('change', (e) => { const i = e.target.closest('input.lnm'); if(!i || !T3 || !T3.dc) return; const l = T3.dc.lines[+i.dataset.l]; if(!l) return;
-  const v = i.value.trim(), N = S.extra.names = S.extra.names || {}; l.keys.forEach((k) => { const nk = C.nameKey(k); if(v) N[nk] = v; else delete N[nk]; });
-  if(v && !PAL().some((x) => x.name === v)) PAL().push({ id: uid(), name: v, type: '' }); complementsChanged(); });
-
+$('d3-lines').addEventListener('change', (e) => { const i = e.target.closest('select.lnm'); if(!i || !T3 || !T3.dc) return; const l = T3.dc.lines[+i.dataset.l]; if(l) applyName(l.keys, i.value); });
 // ============================================================ annuler / rétablir (Ctrl+Z, Ctrl+Y)
 /* Instantanés de l'état saisi (S.extra + mesures des plans). Un nouvel état est enregistré après chaque action
    (clic relâché, champ modifié, touche, recalcul) s'il diffère du précédent. */
