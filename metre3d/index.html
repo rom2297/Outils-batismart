@@ -4548,7 +4548,17 @@ function cutAt(hit, p){
   { const nv = S.extra.vcuts.length - 1, P0 = [e.p1[0] + e.u[0] * s, e.p1[1] + e.u[1] * s], dI = [-e.n[0], -e.n[1]];
     const op = S.extra.vcuts.findIndex((c, i) => { if(i === nv) return false; const q = C.edgeAt(res, c.E, c.N); if(!q || q.i === p.edge) return false; const dx = c.E - P0[0], dy = c.N - P0[1];
       return dx * dI[0] + dy * dI[1] > 1 && Math.abs(dx * dI[1] - dy * dI[0]) < 0.4; });
-    if(op >= 0 && confirm('Une coupe verticale est alignée sur la façade d\'en face. Relier les deux par la toiture (la toiture sera coupée entre elles) ?')){ S.extra.vcuts[nv].roof = true; S.extra.vcuts[op].roof = true; } }
+    if(op >= 0){ if(confirm('Une coupe verticale est alignée sur la façade d\'en face. Relier les deux par la toiture (la toiture sera coupée entre elles) ?')){ S.extra.vcuts[nv].roof = true; S.extra.vcuts[op].roof = true; } }
+    else {                                       // pas de coupe en face : proposer de la poser au même alignement, mesure affichée
+      let best = null; res.edges.forEach((f, j) => { if(j === p.edge) return; const ex = f.p2[0] - f.p1[0], ey = f.p2[1] - f.p1[1], den = dI[0] * ey - dI[1] * ex; if(Math.abs(den) < 1e-9) return;
+        const t = ((f.p1[0] - P0[0]) * ey - (f.p1[1] - P0[1]) * ex) / den, w = ((f.p1[0] - P0[0]) * dI[1] - (f.p1[1] - P0[1]) * dI[0]) / den; if(t > 0.3 && w > 0.02 && w < 0.98 && (!best || t < best.t)) best = { t, j, w }; });
+      if(best){ const f = res.edges[best.j], sB = best.w * f.L, incB = f.u[0] * -f.n[1] + f.u[1] * f.n[0] > 0, sLB = incB ? sB : f.L - sB;
+        const ans = prompt(`Couper aussi la façade d'en face (${f.orientation} n°${best.j + 1}, ${fmt(f.L)} m) au même alignement, et la toiture entre les deux ?\nDistance depuis son angle GAUCHE, vue de l'extérieur (m) — « d x » depuis l'angle droit — Annuler : non :`, sLB.toFixed(2));
+        if(ans != null){ const mm = String(ans).trim().replace(',', '.').match(/^([dg])?\s*(-?\d+(?:\.\d+)?)$/i);
+          if(mm){ const x = parseFloat(mm[2]), sl = mm[1] && mm[1].toLowerCase() === 'd' ? f.L - x : x, s2 = incB ? sl : f.L - sl;
+            if(s2 > 0.3 && s2 < f.L - 0.3){ const vs2 = C.vcutsOf(res, S.extra).get(best.j) || [], j2 = vs2.filter((q) => q < s2).length;
+              S.extra.vcuts.push({ E: +(f.p1[0] + f.u[0] * s2).toFixed(3), N: +(f.p1[1] + f.u[1] * s2).toFixed(3), roof: true }); S.extra.vcuts[nv].roof = true;
+              vReKey(best.j, j2, vs2.length, 'split'); names = S.extra.names = S.extra.names || {}; } } } } } }
   // les deux nouvelles bandes : noms saisis (la découpe horizontale reste : rez / étage × gauche / droite)
   const [lo, hi] = incR ? [nL, nR] : [nR, nL];
   [[j, lo], [j + 1, hi]].forEach(([k, v]) => { const key = `V|${p.edge}|v${k}`; if(v.trim()) names[key] = v.trim(); else delete names[key]; });
