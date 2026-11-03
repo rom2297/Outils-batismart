@@ -1438,7 +1438,7 @@ body.noscroll{overflow:hidden}
      plus les pans de toit, le plancher des combles et le sol. Chaque morceau a une clé stable et un type par défaut. */
   /* coupes verticales : points (E, N) cliqués sur une façade → abscisses s par arête de l'emprise (Map arête → [s triés]) */
   /* clé des noms : mur courant et pignon d'une même façade partagent le nom (la limite à l'égout est interne au calcul) */
-  const nameKey = (k) => k.replace(/^(M\|\d+\|)(mur|pignon)\|/, '$1w|');
+  const nameKey = (k) => k.replace(/^(M\|\d+\|)(mur|pignon)\|/, '$1w|').replace(/\|g$/, '');
   function edgeAt(res, E, N) {                 // point (E, N) → arête de l'emprise la plus proche (à 0.6 m) et abscisse s
     let bi = -1, bd = 0.6, bs = 0; res.edges.forEach((e, i) => { const dx = E - e.p1[0], dy = N - e.p1[1], s = dx * e.u[0] + dy * e.u[1], d = Math.abs(dx * e.n[0] + dy * e.n[1]);
       if (s > 0.1 && s < e.L - 0.1 && d < bd) { bd = d; bi = i; bs = s; } });
@@ -1459,7 +1459,7 @@ body.noscroll{overflow:hidden}
     const zoneOf = (zm) => { let k = 0; cuts.forEach((x, j) => { if (zm >= x.z) k = j + 1; }); return k; };
     const K = cutsE.length + 1, J = vs.length + 1, vOff = new Set(), hOff = new Set();
     (extra.vcuts || []).forEach((c) => { if (!c || !c.off || !c.off.length) return; const p = edgeAt(res, c.E, c.N); if (!p || p.i !== i) return;
-      const b = vs.findIndex((x) => Math.abs(x - p.s) < 0.06); if (b < 0) return; c.off.forEach((z) => { if (isFinite(z)) vOff.add(`${Math.min(K - 1, zoneOf(zr + z))}|${b}`); }); });
+      const b = vs.findIndex((x) => Math.abs(x - p.s) < 0.06); if (b < 0) return; c.off.forEach((z) => { if (isFinite(z)) vOff.add(`${zr + z > zG ? K : Math.min(K - 1, zoneOf(zr + z))}|${b}`); }); });
     cutsE.forEach((c, ci) => c.off.forEach((q) => { const p = q && edgeAt(res, q.E, q.N); if (!p || p.i !== i) return; hOff.add(`${ci}|${vs.filter((x) => x < p.s).length}`); }));
     return { e, zr, cuts, cutsE, zG, vs, K, J, vOff, hOff, zoneOf };
   }
@@ -1487,6 +1487,17 @@ body.noscroll{overflow:hidden}
         if (t > 0.3 && off < 0.4 && (!isFinite(tB) || t <= tB + 0.5)) { B = b.P; vis.push(b.vi); used.add(b.vi); } });
       if (B) out.push({ A: a.P, B, vis }); });
     return out;
+  }
+  /* Planchers (dalle, plancher des combles) coupés par les coupes verticales reliées : emprise moins une bande de 2 mm le long de chaque liaison */
+  function splitFootprint(res, extra) {
+    const L = roofLinks(res, extra); if (!L.length || !res.edges || !res.edges.length) return null;
+    let mp = [[[...res.edges.map((e) => [e.p1[0], e.p1[1]]), [res.edges[0].p1[0], res.edges[0].p1[1]]]]];
+    L.forEach((l) => { const dx = l.B[0] - l.A[0], dy = l.B[1] - l.A[1], m = Math.hypot(dx, dy) || 1, ux = dx / m, uy = dy / m, w = 0.001, ex = 0.3;
+      const a = [l.A[0] - ux * ex, l.A[1] - uy * ex], b = [l.B[0] + ux * ex, l.B[1] + uy * ex], n = [-uy * w, ux * w];
+      try { mp = PC.difference(mp, [[[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]], [a[0] + n[0], a[1] + n[1]]]]); } catch (err) {} });
+    const parts = mp.map((pg) => ({ poly: pg.map((r) => r.slice(0, -1)), area: mpArea([pg]), c: pg[0].reduce((s, q) => [s[0] + q[0], s[1] + q[1]], [0, 0]).map((v) => v / pg[0].length) })).filter((x) => x.area > 0.5);
+    if (parts.length < 2) return null; const tot = parts.reduce((s, x) => s + x.area, 0);
+    parts.sort((a, c) => a.c[0] - c.c[0] || a.c[1] - c.c[1]); parts.forEach((x) => { x.f = x.area / tot; }); return parts;
   }
   const segHitsPan = (p, A, B) => { for (let k = 1; k < 40; k++) { const x = A[0] + (B[0] - A[0]) * k / 40, y = A[1] + (B[1] - A[1]) * k / 40; if ((p.faces || []).some((f) => inRing(f, x, y))) return true; } return false; };
   function roofSplit(res, extra, i) {
@@ -1546,7 +1557,8 @@ body.noscroll{overflow:hidden}
         else { const zs = [z0, ...cutsE.map((x) => x.z).filter((z) => z > z0 + 0.01 && z < z1 - 0.01), z1]; for (let j = 0; j < zs.length - 1; j++) subs.push([zs[j], zs[j + 1], zoneOf(Math.max(zs[j], -1e3) + 0.01)]); }
         subs.forEach(([a, c, zone]) => { if (c - a < 0.01) return; const zg = Math.max(a, Math.min(c, zG));
           if (vs.length && zg > a + 0.01) bnd.slice(0, -1).forEach((s0, j) => entries.push({ band, zone, vj: j, rects: [[s0, bnd[j + 1], a, zg]] }));
-          if (!vs.length) entries.push({ band, zone, vj: null, rects: [[-1, e.L + 1, a, c]] }); else if (zg < c - 0.01) entries.push({ band, zone, vj: null, rects: [[-1, e.L + 1, zg, c]] }); });
+          if (!vs.length) entries.push({ band, zone, vj: null, rects: [[-1, e.L + 1, a, c]] });
+          else if (zg < c - 0.01) bnd.slice(0, -1).forEach((s0, j) => entries.push({ band, zone, vj: j, g: true, rects: [[s0, bnd[j + 1], zg, c]] })); });   // pignon : coupé par les coupes verticales (pas par les horizontales)
       };
       bands.forEach(([band, z0, z1]) => {
         if (!anyOff || band === 'bas') { oldBand(band, z0, z1); return; }
@@ -1559,9 +1571,13 @@ body.noscroll{overflow:hidden}
         const top = vs.length ? zG : Infinity;
         grp.forEach((cells, r) => { const rects = cells.map(([k, j]) => [bnd[j], bnd[j + 1], Math.max(Zb[k], z0), Math.min(Zb[k + 1], z1, top)]).filter((q) => q[3] > q[2] + 0.01);
           if (rects.length) entries.push({ band, zone: cuts.length ? Math.floor(r / J) : null, vj: vs.length ? r % J : null, rects, vAll: new Set(cells.map((c) => c[1])).size === J }); });
-        if (vs.length && zG < z1 - 0.01) entries.push({ band, zone: cuts.length ? zoneOf(Math.max(z0 > -1e3 ? z0 : -1e3, cutsE.length ? cutsE[cutsE.length - 1].z : -1e3) + 0.01) : null, vj: null, rects: [[-1, e.L + 1, Math.max(z0, zG), z1]] });
+        if (vs.length && zG < z1 - 0.01) {           // rangée du pignon : bandes verticales, segments supprimés réunis
+          const zA = cuts.length ? zoneOf(Math.max(z0 > -1e3 ? z0 : -1e3, cutsE.length ? cutsE[cutsE.length - 1].z : -1e3) + 0.01) : null, pg = [...Array(J).keys()];
+          const f2 = (x) => (pg[x] === x ? x : (pg[x] = f2(pg[x]))); GR.vOff.forEach((x) => { const [k, b] = x.split('|').map(Number); if (k !== K) return; const p1 = f2(b), q1 = f2(b + 1); if (p1 !== q1) pg[Math.max(p1, q1)] = Math.min(p1, q1); });
+          const g2 = new Map(); for (let j = 0; j < J; j++) { const r = f2(j); (g2.get(r) || g2.set(r, []).get(r)).push(j); }
+          g2.forEach((js, r) => entries.push({ band, zone: zA, vj: r, g: true, vAll: js.length === J, rects: js.map((j) => [bnd[j], bnd[j + 1], Math.max(z0, zG), z1]) })); }
       });
-      entries.forEach(({ band, zone, vj, rects, vAll }) => {
+      entries.forEach(({ band, zone, vj, rects, vAll, g }) => {
         const R = rects.map(([s0, s1, za, zb]) => [[[s0, za], [s1, za], [s1, zb], [s0, zb], [s0, za]]]), rect = R.length === 1 ? R[0] : PC.union(...R);
         {
         [['hs', above], ['ent', below]].forEach(([ter, reg]) => {
@@ -1571,7 +1587,7 @@ body.noscroll{overflow:hidden}
           const def = band === 'bas' ? (ss === 'chauffé' ? (e.split ? 'Contre chauffé' : ter === 'hs' ? 'Mur extérieur' : terT) : OUT)
             : e.split ? (band === 'pignon' && combNC ? OUT : 'Contre chauffé')
             : band === 'pignon' ? (combNC ? OUT : 'Mur extérieur') : (ter === 'hs' ? 'Mur extérieur' : terT);
-          const key = `M|${i}|${band}|${ter}` + (zone != null ? `|z${zone}` : '') + (vj != null ? `|v${vj}` : '');
+          const key = `M|${i}|${band}|${ter}` + (zone != null ? `|z${zone}` : '') + (vj != null ? `|v${vj}` : '') + (g ? '|g' : '');
           const zz = zone != null ? zoneName(zone) : null, [vn, vU] = vj != null && !vAll ? vName(vj) : [null, false];
           const zn = [zz, vn].filter(Boolean).join(' – ') || null, name = nm(key, zn);
           P.push({ key, kind: 'mur', edge: i, band, ter, orientation: e.orientation, poly, area: A, depth, def, type: adj[key] || def, zone: name, custom: !!(name && (name !== zn || vU)), vpart: vj,
@@ -1601,12 +1617,18 @@ body.noscroll{overflow:hidden}
       parts.forEach((r, k) => { const kk = `T|${i}|r${r.sig}`, zn = `partie ${k + 1}`, name = nm(kk, zn);
         P.push({ key: kk, kind: 'toit', pan: i, orientation: o, area: r.area, def, type: adj[kk] || def, zone: name, custom: name !== zn, rpolys: r.polys, label: `${lab0} — ${name}` }); });
     });
-    if (zEave != null) { const key = 'P|0', def = combNC ? 'Plafond/grenier contre non-chauffé' : OUT;
+    const FPS = splitFootprint(res, extra);
+    if (zEave != null && FPS) { const def = combNC ? 'Plafond/grenier contre non-chauffé' : OUT;
+      FPS.forEach((x, k) => { const key = `P|0|r${k}`, zn = `partie ${k + 1}`, name = nm(key, zn);
+        P.push({ key, kind: 'plafond', orientation: 'Horiz', area: res.footprintArea * x.f, z: zEave, poly2d: x.poly, def, type: adj[key] || def, zone: name, custom: name !== zn, label: `Plancher des combles — ${name}` }); }); }
+    else if (zEave != null) { const key = 'P|0', def = combNC ? 'Plafond/grenier contre non-chauffé' : OUT;
       P.push({ key, kind: 'plafond', orientation: 'Horiz', area: res.footprintArea, z: zEave, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: 'Plancher des combles (empreinte, au niveau de l\'égout)' }); }
     { const dF = res.tRef != null && res.zFloor != null ? res.tRef - res.zFloor : 0;      // profondeur du sol sous le terrain moyen
       const key = 'S|0', def = ss === 'non chauffé' ? 'Contre non-chauffé (Ssol sous terre) (non isolé et/ou non étanche à l\'air)' : dF > 2 ? 'Contre terrain > 2 m' : 'Contre terrain ≤ 2 m';
       const zb = zCut != null ? zCut : res.zFloor != null ? res.zFloor : Math.min(...res.edges.map((e) => isFinite(e.zbot) ? e.zbot : Infinity));
-      P.push({ key, kind: 'sol', orientation: 'Horiz', area: res.footprintArea, z: zb, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: zCut != null ? 'Plancher sur sous-sol (empreinte, base de l\'enveloppe)' : `Dalle inférieure / radier (empreinte, ${fmt(dF)} m sous le terrain moyen)` });
+      if (FPS) FPS.forEach((x, k) => { const kk = `S|0|r${k}`, zn = `partie ${k + 1}`, name = nm(kk, zn);
+        P.push({ key: kk, kind: 'sol', orientation: 'Horiz', area: res.footprintArea * x.f, z: zb, poly2d: x.poly, def, type: adj[kk] || def, zone: name, custom: name !== zn, label: `${zCut != null ? 'Plancher sur sous-sol' : 'Dalle inférieure / radier'} — ${name}` }); });
+      else P.push({ key, kind: 'sol', orientation: 'Horiz', area: res.footprintArea, z: zb, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: zCut != null ? 'Plancher sur sous-sol (empreinte, base de l\'enveloppe)' : `Dalle inférieure / radier (empreinte, ${fmt(dF)} m sous le terrain moyen)` });
       (res.baseParts || []).forEach((bp, k) => { const kk = `S|b${k}`;
         P.push({ key: kk, kind: 'sol', orientation: 'Horiz', area: bp.area, z: zb, poly2d: bp.poly, def, type: adj[kk] || def, zone: nm(kk), custom: !!nm(kk), label: `Sol d'une partie accolée (annexe, avant-corps), ${fmt(bp.area)} m²` }); }); }
     (res.overhangs || []).forEach((o, k) => {
@@ -4364,7 +4386,7 @@ function drawDecomp(g, DC, P, b, res, ink){
       if(rest.length) tris.push(...tri2(rest, at(() => 0)));
       add(tris, p); }
     else if(p.kind === 'plafond' && p.type === C.OUT && !sel.has(p.key)) return;   // plancher des combles hors enveloppe : masqué (bouton « Plancher des combles » pour le choisir)
-    else if(p.kind === 'sol' && p.poly2d){ add(tri2([p.poly2d.map((r) => [...r, r[0]])], (x, y) => P([x, y, p.z], 0)), p); }   // plancher sur l'extérieur
+    else if((p.kind === 'sol' || p.kind === 'plafond') && p.poly2d){ add(tri2([p.poly2d.map((r) => [...r, r[0]])], (x, y) => P([x, y, p.z], 0)), p); }   // plancher sur l'extérieur
     else if(p.kind === 'plafond' || p.kind === 'sol'){ const fpr = [[[...b.footprint, b.footprint[0]]]]; add(tri2(fpr, (x, y) => P([x, y, p.z], 0)), p); }
   });
   // pans de toit : faces du solide rattachées au pan le plus proche (azimut / pente)
@@ -4626,7 +4648,10 @@ function drawCuts(g, DC, P, res){
         T3.cutSegs.push({ t: 'h', ci, i, j, A, B, e, obj: gH(ci), sm: (bnd[j] + bnd[j + 1]) / 2 }); } });
     (vByEdge.get(i) || []).forEach(([vi, f]) => { const b = GR.vs.findIndex((x) => Math.abs(x - f.s) < 0.06); if(b < 0) return;
       for(let k = 0; k < GR.K; k++){ if(GR.vOff.has(`${k}|${b}`)) continue; const za = Math.max(Zb[k], r[0]), zb = Math.min(Zb[k + 1], r1); if(zb - za < 0.05) continue;
-        const A = at(e, f.s, za), B = at(e, f.s, zb); line(gV(vi), A, B); T3.cutSegs.push({ t: 'v', vi, f, k, i, A, B, e, obj: gV(vi), zm: (za + zb) / 2 - zr }); } });
+        const A = at(e, f.s, za), B = at(e, f.s, zb); line(gV(vi), A, B); T3.cutSegs.push({ t: 'v', vi, f, k, i, A, B, e, obj: gV(vi), zm: (za + zb) / 2 - zr }); }
+      // pignon : segment au-dessus de la base du pignon, jusqu'au haut du mur à cet endroit
+      const zt = interp(e.top || [], f.s); if(isFinite(GR.zG) && isFinite(zt) && zt > GR.zG + 0.05 && !GR.vOff.has(`${GR.K}|${b}`)){ const A = at(e, f.s, GR.zG), B = at(e, f.s, zt); line(gV(vi), A, B);
+        T3.cutSegs.push({ t: 'v', vi, f, k: GR.K, i, A, B, e, obj: gV(vi), zm: (GR.zG + zt) / 2 - zr }); } });
   });
   // coupes de toiture (posées sur un pan) et coupes verticales reliées à la toiture
   (S.extra.rcuts || []).forEach((c, ri) => { const pi = C.roofPanOf(res, c); if(pi < 0) return; const grp = new THREE.Group(); grp.renderOrder = 5; g.add(grp);
@@ -4709,7 +4734,7 @@ function cutGhost(ev){
   if(!(p.edge >= 0)){ ghostOff(); return false; }
   const e = res.edges[p.edge]; let sv = (E - e.p1[0]) * e.u[0] + (N - e.p1[1]) * e.u[1]; const sn = snapTo(sv, jambsOf(e), 0.3); if(sn != null) sv = sn;
   const incR = e.u[0] * -e.n[1] + e.u[1] * e.n[0] > 0, sL = incR ? sv : e.L - sv;
-  let z0 = Infinity, z1 = -Infinity; T3.dc.pieces.forEach((q) => { if(q.edge !== p.edge || !q.poly) return; q.poly.forEach((pg) => pg[0].forEach(([, z]) => { z0 = Math.min(z0, z); z1 = Math.max(z1, z); })); }); z1 = Math.min(z1, C.gableBase(e));
+  let z0 = Infinity, z1 = -Infinity; T3.dc.pieces.forEach((q) => { if(q.edge !== p.edge || !q.poly) return; q.poly.forEach((pg) => pg[0].forEach(([, z]) => { z0 = Math.min(z0, z); z1 = Math.max(z1, z); })); }); { const zt = interp(e.top || [], sv); if(isFinite(zt)) z1 = zt; }
   const P = (z) => new THREE.Vector3(e.p1[0] + e.u[0] * sv + e.n[0] * 0.06 - o[0], z - o[2], -(e.p1[1] + e.u[1] * sv + e.n[1] * 0.06 - o[1]));
   ghostOff(); T3.ghost = new THREE.Line(new THREE.BufferGeometry().setFromPoints([P(z0), P(z1)]), new THREE.LineDashedMaterial({ color: 0x1c7ed6, dashSize: 0.25, gapSize: 0.15, depthTest: false, transparent: true }));
   T3.ghost.computeLineDistances(); T3.ghost.renderOrder = 7; T3.sc.add(T3.ghost); T3.render();
