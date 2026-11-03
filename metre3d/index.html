@@ -326,6 +326,7 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" data-view="ori" aria-pressed="false">Orientations</button>
         <button type="button" class="tool" id="d3-hcut" aria-pressed="false" title="Clic sur une façade : coupe à cette hauteur sur toutes les façades (le pignon reste entier). Glisser une coupe pour la déplacer.">✂ Coupe horizontale</button>
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
+        <label class="note" style="display:inline-flex;gap:4px;align-items:center" title="En posant une coupe verticale : la poser aussi sur la façade d'en face, au même alignement, et couper la toiture et les planchers entre les deux"><input type="checkbox" id="d3-vpair" checked> en face + toiture</label>
         <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
@@ -1477,13 +1478,14 @@ body.noscroll{overflow:hidden}
   function roofLinks(res, extra) {
     const vc = (extra && extra.vcuts) || [], pts = [], out = [];
     vc.forEach((c, vi) => { if (!c || !c.roof) return; const q = edgeAt(res, c.E, c.N); if (!q) return; const e = res.edges[q.i];
-      pts.push({ vi, i: q.i, P: [e.p1[0] + e.u[0] * q.s, e.p1[1] + e.u[1] * q.s], d: [-e.n[0], -e.n[1]] }); });
+      pts.push({ vi, i: q.i, pair: c.pair || null, P: [e.p1[0] + e.u[0] * q.s, e.p1[1] + e.u[1] * q.s], d: [-e.n[0], -e.n[1]] }); });
     const used = new Set();
     pts.forEach((a) => { if (used.has(a.vi)) return; used.add(a.vi);
       let tB = Infinity; res.edges.forEach((e, j) => { if (j === a.i) return; const ex = e.p2[0] - e.p1[0], ey = e.p2[1] - e.p1[1], den = a.d[0] * ey - a.d[1] * ex; if (Math.abs(den) < 1e-9) return;
         const t = ((e.p1[0] - a.P[0]) * ey - (e.p1[1] - a.P[1]) * ex) / den, w = ((e.p1[0] - a.P[0]) * a.d[1] - (e.p1[1] - a.P[1]) * a.d[0]) / den; if (t > 0.3 && w >= -1e-6 && w <= 1 + 1e-6 && t < tB) tB = t; });
       let B = isFinite(tB) ? [a.P[0] + a.d[0] * tB, a.P[1] + a.d[1] * tB] : null, vis = [a.vi];
-      pts.forEach((b) => { if (used.has(b.vi)) return; const dx = b.P[0] - a.P[0], dy = b.P[1] - a.P[1], t = dx * a.d[0] + dy * a.d[1], off = Math.abs(dx * a.d[1] - dy * a.d[0]);
+      const pb = a.pair && pts.find((b) => b.pair === a.pair && !used.has(b.vi)); if (pb) { B = pb.P; vis.push(pb.vi); used.add(pb.vi); }
+      else pts.forEach((b) => { if (used.has(b.vi)) return; const dx = b.P[0] - a.P[0], dy = b.P[1] - a.P[1], t = dx * a.d[0] + dy * a.d[1], off = Math.abs(dx * a.d[1] - dy * a.d[0]);
         if (t > 0.3 && off < 0.4 && (!isFinite(tB) || t <= tB + 0.5)) { B = b.P; vis.push(b.vi); used.add(b.vi); } });
       if (B) out.push({ A: a.P, B, vis }); });
     return out;
@@ -4545,20 +4547,13 @@ function cutAt(hit, p){
   const nL = '', nR = '';
   (S.extra.vcuts = S.extra.vcuts || []).push({ E: +(e.p1[0] + e.u[0] * s).toFixed(3), N: +(e.p1[1] + e.u[1] * s).toFixed(3) });
   vReKey(p.edge, j, vs.length, 'split'); names = S.extra.names = S.extra.names || {};   // reKey remplace l'objet
-  { const nv = S.extra.vcuts.length - 1, P0 = [e.p1[0] + e.u[0] * s, e.p1[1] + e.u[1] * s], dI = [-e.n[0], -e.n[1]];
-    const op = S.extra.vcuts.findIndex((c, i) => { if(i === nv) return false; const q = C.edgeAt(res, c.E, c.N); if(!q || q.i === p.edge) return false; const dx = c.E - P0[0], dy = c.N - P0[1];
-      return dx * dI[0] + dy * dI[1] > 1 && Math.abs(dx * dI[1] - dy * dI[0]) < 0.4; });
-    if(op >= 0){ if(confirm('Une coupe verticale est alignée sur la façade d\'en face. Relier les deux par la toiture (la toiture sera coupée entre elles) ?')){ S.extra.vcuts[nv].roof = true; S.extra.vcuts[op].roof = true; } }
-    else {                                       // pas de coupe en face : proposer de la poser au même alignement, mesure affichée
-      let best = null; res.edges.forEach((f, j) => { if(j === p.edge) return; const ex = f.p2[0] - f.p1[0], ey = f.p2[1] - f.p1[1], den = dI[0] * ey - dI[1] * ex; if(Math.abs(den) < 1e-9) return;
-        const t = ((f.p1[0] - P0[0]) * ey - (f.p1[1] - P0[1]) * ex) / den, w = ((f.p1[0] - P0[0]) * dI[1] - (f.p1[1] - P0[1]) * dI[0]) / den; if(t > 0.3 && w > 0.02 && w < 0.98 && (!best || t < best.t)) best = { t, j, w }; });
-      if(best){ const f = res.edges[best.j], sB = best.w * f.L, incB = f.u[0] * -f.n[1] + f.u[1] * f.n[0] > 0, sLB = incB ? sB : f.L - sB;
-        const ans = prompt(`Couper aussi la façade d'en face (${f.orientation} n°${best.j + 1}, ${fmt(f.L)} m) au même alignement, et la toiture entre les deux ?\nDistance depuis son angle GAUCHE, vue de l'extérieur (m) — « d x » depuis l'angle droit — Annuler : non :`, sLB.toFixed(2));
-        if(ans != null){ const mm = String(ans).trim().replace(',', '.').match(/^([dg])?\s*(-?\d+(?:\.\d+)?)$/i);
-          if(mm){ const x = parseFloat(mm[2]), sl = mm[1] && mm[1].toLowerCase() === 'd' ? f.L - x : x, s2 = incB ? sl : f.L - sl;
-            if(s2 > 0.3 && s2 < f.L - 0.3){ const vs2 = C.vcutsOf(res, S.extra).get(best.j) || [], j2 = vs2.filter((q) => q < s2).length;
-              S.extra.vcuts.push({ E: +(f.p1[0] + f.u[0] * s2).toFixed(3), N: +(f.p1[1] + f.u[1] * s2).toFixed(3), roof: true }); S.extra.vcuts[nv].roof = true;
-              vReKey(best.j, j2, vs2.length, 'split'); names = S.extra.names = S.extra.names || {}; } } } } } }
+  // en face : coupe posée automatiquement au même alignement (perpendiculaire à la façade), reliée par la toiture et les planchers
+  if(!$('d3-vpair') || $('d3-vpair').checked){ const nv = S.extra.vcuts.length - 1, r = vOpposite(nv);
+    if(r){ const pid = uid(); S.extra.vcuts[nv].roof = true; S.extra.vcuts[nv].pair = pid;
+      if(r.existing != null){ Object.assign(S.extra.vcuts[r.existing], { E: r.E, N: r.N, roof: true, pair: pid }); }
+      else { const vs2 = C.vcutsOf(res, S.extra).get(r.j) || [], j2 = vs2.filter((q) => q < r.s).length; S.extra.vcuts.push({ E: r.E, N: r.N, roof: true, pair: pid }); vReKey(r.j, j2, vs2.length, 'split'); }
+      names = S.extra.names = S.extra.names || {};
+      setTimeout(() => hint3(`Coupe posée aussi en face (${r.f.orientation} n°${r.j + 1}, ${r.sL.toFixed(2)} m de l'angle gauche) et toiture / planchers reliés — elles bougent ensemble ; Suppr enlève les deux.`), 50); } }
   // les deux nouvelles bandes : noms saisis (la découpe horizontale reste : rez / étage × gauche / droite)
   const [lo, hi] = incR ? [nL, nR] : [nR, nL];
   [[j, lo], [j + 1, hi]].forEach(([k, v]) => { const key = `V|${p.edge}|v${k}`; if(v.trim()) names[key] = v.trim(); else delete names[key]; });
@@ -4630,14 +4625,28 @@ function renderVCuts(){
   tb.querySelectorAll('[data-vroof]').forEach((cb) => { cb.onchange = () => vRoofToggle(+cb.closest('tr').dataset.v, cb.checked); });
 }
 function delHCut(i){ const cs = S.extra.cuts || []; if(!cs[i]) return; hReKey(i, cs.length, 'merge'); cs.splice(i, 1); if(T3){ T3.sel = []; T3.cutSel = null; } complementsChanged(); }
-function delVCut(i){ const vc = S.extra.vcuts || [], f = vc[i] && vcInfo(vc[i]); if(!vc[i]) return;
+// point de la façade d'en face au même alignement (rayon perpendiculaire depuis la coupe vi) ; existing = coupe déjà proche (< 0.6 m)
+function vOpposite(vi){
+  const res = S.res, c = S.extra.vcuts[vi], f0 = c && vcInfo(c); if(!f0) return null; const e = f0.e, P0 = [c.E, c.N], d = [-e.n[0], -e.n[1]]; let best = null;
+  res.edges.forEach((f, j) => { if(j === f0.edge) return; const ex = f.p2[0] - f.p1[0], ey = f.p2[1] - f.p1[1], den = d[0] * ey - d[1] * ex; if(Math.abs(den) < 1e-9) return;
+    const t = ((f.p1[0] - P0[0]) * ey - (f.p1[1] - P0[1]) * ex) / den, w = ((f.p1[0] - P0[0]) * d[1] - (f.p1[1] - P0[1]) * d[0]) / den; if(t > 0.3 && w > 0.02 && w < 0.98 && (!best || t < best.t)) best = { t, j, w }; });
+  if(!best) return null; const f = res.edges[best.j], s = best.w * f.L; if(s < 0.3 || s > f.L - 0.3) return null;
+  const E = +(f.p1[0] + f.u[0] * s).toFixed(3), N = +(f.p1[1] + f.u[1] * s).toFixed(3), inc = f.u[0] * -f.n[1] + f.u[1] * f.n[0] > 0;
+  const existing = S.extra.vcuts.findIndex((q, k) => k !== vi && (!q.pair || q.pair === c.pair) && Math.hypot(q.E - E, q.N - N) < 0.6);
+  return { E, N, j: best.j, f, s, sL: inc ? s : f.L - s, existing: existing >= 0 ? existing : null };
+}
+const vPartner = (i) => { const c = (S.extra.vcuts || [])[i]; return c && c.pair ? S.extra.vcuts.findIndex((q, k) => k !== i && q.pair === c.pair) : -1; };
+function delVCut(i, alone){ const pi = alone ? -1 : vPartner(i); if(pi >= 0){ const [a, b] = pi > i ? [pi, i] : [i, pi]; delVCut(a, true); delVCut(b, true); return; }
+  const vc = S.extra.vcuts || [], f = vc[i] && vcInfo(vc[i]); if(!vc[i]) return;
   if(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j = vs.findIndex((x) => Math.abs(x - f.s) < 0.06); if(j >= 0) vReKey(f.edge, j, vs.length, 'merge'); }
   vc.splice(i, 1); if(T3){ T3.sel = []; T3.cutSel = null; } complementsChanged(); }
 // déplacer une coupe verticale sans changer l'ordre des parties (noms et types conservés)
 function vLimits(f){ const vs = C.vcutsOf(S.res, S.extra).get(f.edge) || [], j = vs.findIndex((x) => Math.abs(x - f.s) < 0.06);
   return [j > 0 ? vs[j - 1] + 0.1 : 0.3, j >= 0 && j < vs.length - 1 ? vs[j + 1] - 0.1 : f.e.L - 0.3]; }
 function moveVCut(i, f, s){ const [lo, hi] = vLimits(f); s = Math.max(lo, Math.min(hi, s));
-  S.extra.vcuts[i] = { E: +(f.e.p1[0] + f.e.u[0] * s).toFixed(3), N: +(f.e.p1[1] + f.e.u[1] * s).toFixed(3) }; T3.sel = []; complementsChanged(); }
+  Object.assign(S.extra.vcuts[i], { E: +(f.e.p1[0] + f.e.u[0] * s).toFixed(3), N: +(f.e.p1[1] + f.e.u[1] * s).toFixed(3) });   // garde segments supprimés, liaison, paire
+  const pi = vPartner(i); if(pi >= 0){ const r = vOpposite(i); if(r) Object.assign(S.extra.vcuts[pi], { E: r.E, N: r.N }); }   // la coupe d'en face suit
+  T3.sel = []; complementsChanged(); }
 // lignes de coupe dans la vue 3D ; T3.cutSegs : cibles pour le glisser
 const inRing2 = (r, x, y) => { let c = false; for(let a = 0, b = r.length - 1; a < r.length; b = a++){ const [xi, yi] = r[a], [xj, yj] = r[b]; if((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c; } return c; };
 function drawCuts(g, DC, P, res){
