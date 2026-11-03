@@ -316,6 +316,7 @@ const DEFAULT_SETTINGS = {
   taux: 135, tauxThermo: 145, tva: 8.1, km: 0.7, roy: 80, royp: 190, pubMaj: 30,
   serveur: { pattern: '{dossier}', sousDossiers: '1. Doc reçus\n2. E-mails\n3. Offre\n4. Photos\n{prestation}', dossierOffre: '3. Offre', racine: '' },
   sectionParPage: true,
+  bdd: { initiales: 'NEF', nrProjet: 'Z_ATT', mandats: {} },
   seuilZone: 30, subvInd: 1000, subvAutre: 1500, subvComPct: 50, subvComMax: 1000,
   rabaisChauffren: 5, rabaisExistant: 10, rabaisLesosai: 40,
   departs: [{ id: 'bureau', nom: 'Bureau batismart', adresse: 'Rue des Pêcheurs 8b, 1400 Yverdon-les-Bains', lat: 46.7785, lon: 6.6409 },
@@ -475,12 +476,13 @@ async function loadAll() {
   if (['{numero}_{projet}', '{projet}'].includes(S.settings.serveur.pattern)) S.settings.serveur.pattern = '{dossier}';
   if (!S.settings.serveur.sousDossiers) { S.settings.serveur.sousDossiers = DEFAULT_SETTINGS.serveur.sousDossiers; S.settings.serveur.dossierOffre = DEFAULT_SETTINGS.serveur.dossierOffre; }
   if (S.settings.mailSignature === 'Meilleures salutations\n\nbatismart SA\nRue des Pêcheurs 8b – 1400 Yverdon-les-Bains\n+41 24 552 02 90 – info@batismart.ch') S.settings.mailSignature = DEFAULT_SETTINGS.mailSignature;
+  S.settings.bdd = Object.assign(clone(DEFAULT_SETTINGS.bdd), S.settings.bdd || {});
   if (!Array.isArray(S.settings.departs) || !S.settings.departs.length) S.settings.departs = clone(DEFAULT_SETTINGS.departs);
   { const known = new Set(S.settings.departs.map((d) => d.id)), names = new Set(S.settings.departs.map((d) => (d.nom || '').toLowerCase()));
     for (const d of DEFAULT_SETTINGS.departs) if (!known.has(d.id) && !names.has(d.nom.toLowerCase())) S.settings.departs.push(clone(d)); }
   if (S.settings.bureau) { const d = S.settings.departs[0]; if (S.settings.bureau.lat) Object.assign(d, { lat: S.settings.bureau.lat, lon: S.settings.bureau.lon, adresse: S.settings.bureau.label || d.adresse }); delete S.settings.bureau; }
   for (const o of S.offres) { if (o.projet.nomAuto !== false && o.statut === 'Brouillon' && o.batiment.adresse && o.projet.nom !== projetAuto(o)) { o.projet.nom = projetAuto(o); DB.put('offres', o); } }
-  for (const o of S.offres) { if (o.projet.nomAuto == null) { o.projet.nomAuto = !o.projet.nom || /^\d{8}(-\d+)?\b/.test(o.projet.nom); applyProjetAuto(o); DB.put('offres', o); } }
+  for (const o of S.offres) { if (o.projet.nomAuto == null) { o.projet.nomAuto = !o.projet.nom || /^\d{8,10}(-\d+)?\b/.test(o.projet.nom); applyProjetAuto(o); DB.put('offres', o); } }
   autoExpire();
 }
 const saveSettings = () => DB.put('kv', S.settings);
@@ -512,9 +514,10 @@ function autoExpire() {
 function nextNumero(dateIso) {
   const d = dateIso ? new Date(dateIso) : new Date();
   const p = (n) => String(n).padStart(2, '0');
-  let base = `${p(d.getFullYear() % 100)}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}`;
-  let n = base, k = 2;
-  while (S.offres.some((o) => o.numero === n)) n = `${base}-${k++}`;
+  // aammjjhhmm : heure + minute de création ; si le numéro existe déjà, minute suivante
+  const fmt = (x) => `${p(x.getFullYear() % 100)}${p(x.getMonth() + 1)}${p(x.getDate())}${p(x.getHours())}${p(x.getMinutes())}`;
+  const t = new Date(d); let n = fmt(t);
+  while (S.offres.some((o) => o.numero === n)) { t.setMinutes(t.getMinutes() + 1); n = fmt(t); }
   return n;
 }
 
@@ -688,11 +691,11 @@ function cx(b) { return b.categorie === 'ind' ? 1 : (b.logements || 0) > 10 ? 2.
 const MAJ_PAC = "l'installation d'une pompe à chaleur";
 function majMotif(op) { const m = String(op.majMotif ?? '').trim().replace(/\.$/, ''); return op.majType === 'travaux' && (!m || m === MAJ_PAC) ? 'des travaux de rénovation' : m; }
 function cecbMajSections(o) {
-  const op = o.options, motif = majMotif(op), pac = /pompe à chaleur|\bPAC\b/i.test(motif), vis = op.majVisite !== false;
+  const op = o.options, motif = majMotif(op), pac = /pompe à chaleur|\bPAC\b/i.test(motif), vis = !!op.majVisite;
   return [
     { id: 'intro', body: `${CIV(o)},\n\nNous vous remercions de votre demande et de votre intérêt à faire appel à nous pour effectuer la mise à jour du CECB ${op.possessif === "d'un" ? 'du' : op.possessif} bâtiment sis **${ADR(o)}**${motif ? ` suite à ${motif}` : ''}. C'est avec plaisir que nous vous soumettons notre offre de prestations.` },
     { id: 'prest', title: 'Prestations pour la mise à jour du CECB', body: `- Reprise des données du CECB existant et regroupement des informations relatives aux modifications du bâtiment
-${vis ? `- Déplacement et visite du bâtiment pour le relevé des modifications (environ ${op.majType === 'travaux' ? '1h à 1h30' : '30 min à 1h'} sur place)\n` : ''}${op.majType === 'travaux' ? "- Mise à jour des métrés et des éléments d'enveloppe rénovés (murs, toiture, sols, fenêtres)\n" : ''}- Mise à jour des données du bâtiment${pac ? ' et de la nouvelle installation de production de chaleur' : ''} dans l'outil en ligne CECB
+${vis ? '- Déplacement et visite du bâtiment pour le relevé des modifications (environ 1h sur place)\n' : ''}${op.majType === 'travaux' ? "- Mise à jour des métrés et des éléments d'enveloppe rénovés (murs, toiture, sols, fenêtres)\n" : ''}- Mise à jour des données du bâtiment${pac ? ' et de la nouvelle installation de production de chaleur' : ''} dans l'outil en ligne CECB
 - Établissement du nouveau document CECB officiel` },
     { id: 'docs', title: 'Documents à nous remettre', body: `Plusieurs documents sont nécessaires pour nous permettre de mener à bien notre mission et de vous fournir un travail de qualité.${vis ? ' Ces documents et ces informations peuvent nous être remis lors de notre visite du bâtiment.' : ''}
 
@@ -708,7 +711,7 @@ ${op.majType === 'travaux' ? "- Plans des parties transformées et descriptif de
 - Validité de l'offre : ${o.validiteJours} jours.
 - Conditions de prestations : nos ingénieurs accrédités Experts CECB réalisent leur mission dans l'état actuel des connaissances de la technique et des informations transmises par le mandataire.
 - La présente offre se base sur la reprise du CECB existant. Si celui-ci est inutilisable ou si des modifications importantes non annoncées sont constatées, un montant supplémentaire peut être demandé.
-- Les taxes de publication du CECB pour la mise à jour (${S.settings.pubMaj}.- CHF) sont incluses.` },
+- Les taxes de publication du CECB pour la mise à jour (${S.settings.pubMaj}.- CHF) sont incluses.${vis ? '' : `\n- Aucune visite du bâtiment n'est prévue : la mise à jour est réalisée sur la base des documents fournis. Si une visite s'avérait nécessaire, elle serait facturée 1 h au tarif horaire de ${S.settings.taux} CHF HT/h (déplacement en sus au-delà de ${S.settings.seuilZone} km).`}` },
     { id: 'info', title: 'Informations supplémentaires', body: `Le CECB est le Certificat énergétique cantonal des bâtiments et il s'agit d'un document officiel. Il montre sous la forme d'étiquettes de couleurs d'une part l'efficacité de l'enveloppe thermique du bâtiment et d'autre part l'efficacité des installations techniques. Après des travaux (remplacement du chauffage, isolation, installation photovoltaïque…), sa mise à jour permet de refléter l'état actuel du bâtiment et ses nouvelles classes énergétiques.
 
 Notre équipe est composée de ${S.settings.nbExperts} experts CECB certifiés avec plus de 40 ans d'expérience cumulée de conseils en matière de rénovation énergétique des bâtiments. Nos clients bénéficient de nos conseils avec notre approche qui se veut totalement neutre quant aux travaux à réaliser puisque notre bureau ne vend aucune installation, ni aucune prestation pour l'exécution des éventuels travaux de rénovation.` },
@@ -847,12 +850,12 @@ const TYPES = {
   /* ---------------------------------------------------------- CECB */
   CECB: {
     label: 'CECB / CECB Plus', fichier: (o) => ({ 'CECB Plus': 'CECB_Plus', 'Mise à jour CECB': 'CECB_MAJ' }[o.options.prestation] || 'CECB'), validite: 60,
-    defaults: { prestation: 'CECB Plus', majType: 'technique', majMotif: "l'installation d'une pompe à chaleur", majVisite: true, motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
+    defaults: { prestation: 'CECB Plus', majType: 'technique', majMotif: "l'installation d'une pompe à chaleur", majVisite: false, motif: '', chauffren: false, subvCantonale: true, subvCommunale: false, rabaisChauffren: true, rabaisExistant: false, rabaisAutre: false, rabaisAutreTxt: '', rabaisAutrePct: 5, thermo: false, delai: 20, possessif: 'de votre' },
     options: [
       { k: 'prestation', label: 'Prestation', type: 'select', opts: ['CECB', 'CECB Plus', 'Mise à jour CECB'] },
       { k: 'majType', label: 'Type de mise à jour', type: 'select', opts: [['technique', 'Installations techniques (ex. nouvelle PAC)'], ['travaux', "Après travaux d'enveloppe (isolation, fenêtres…)"]], show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'majMotif', label: 'Mise à jour suite à', type: 'text', ph: "l'installation d'une pompe à chaleur", show: (o) => o.options.prestation === 'Mise à jour CECB' },
-      { k: 'majVisite', label: 'Visite du bâtiment', type: 'bool', show: (o) => o.options.prestation === 'Mise à jour CECB' },
+      { k: 'majVisite', label: 'Visite du bâtiment (+1 h)', type: 'bool', show: (o) => o.options.prestation === 'Mise à jour CECB' },
       { k: 'possessif', label: 'Formulation', type: 'select', opts: ['de votre', "d'un", 'du'] },
       { k: 'motif', label: 'Motif (suite de la phrase d\'intro)', type: 'text', ph: 'ex. nécessaire pour la vente.', show: (o) => o.options.prestation !== 'Mise à jour CECB' },
       { k: 'chauffren', label: 'Conseil incitatif CHAUFF-REN (chauffage > 10 ans)', type: 'bool', show: (o) => o.options.prestation !== 'Mise à jour CECB', hint: (o) => o.batiment.chauffageMaj ? `RegBL : info chauffage mise à jour le ${o.batiment.chauffageMaj} – vérifier l'âge sur map.geo.admin` : 'Vérifier l\'âge du chauffage dans map.geo.admin' },
@@ -870,7 +873,8 @@ const TYPES = {
       const b = o.batiment, op = o.options, st = S.settings, plus = op.prestation === 'CECB Plus';
       if (op.prestation === 'Mise à jour CECB') {
         const B = blk("Devis pour la mise à jour d'un CECB", { summaryLabel: 'Mise à jour CECB' }), M = op.majType === 'travaux' ? S.baremes.cecbMajTravaux : S.baremes.cecbMaj, f = num(M[b.categorie] ?? M.ind), tj = op.majVisite ? trajet(b) : { forfait: 0 };
-        B.lines.push(L(`Forfait pour la mise à jour du CECB${op.majType === 'travaux' ? ' après travaux' : ''} (${catTxt(b).toLowerCase()})${op.majVisite ? ' – visite incluse' : ''}`, 1, 'forfait', f));
+        B.lines.push(L(`Forfait pour la mise à jour du CECB${op.majType === 'travaux' ? ' après travaux' : ''} (${catTxt(b).toLowerCase()})`, 1, 'forfait', f));
+        if (op.majVisite) B.lines.push(L(`Déplacement et visite du bâtiment (1 h à ${st.taux} CHF HT/h)`, 1, 'forfait', num(st.taux)));
         if (tj.forfait) B.lines.push(L(`Déplacement (${fmtN(tj.km, 0)} km au-delà des ${st.seuilZone} km offerts)`, 1, 'forfait', tj.forfait));
         B.lines.push(L("Frais de publication facturé par l'association CECB", 1, 'forfait', st.pubMaj));
         addCx(o, B, f);
@@ -1780,6 +1784,7 @@ async function srvCreate(o) {
     const base = pdfFileName(o).replace(/\.pdf$/, '');
     await srvWrite(target, base + '.pdf', await pdfBlob(o));
     if (cfg.word !== false) await srvWrite(target, base + '.docx', await buildDocx(o));
+    await srvWrite(target, bddFileName(o), bddXlsx(o));
     const full = [root.name, ...path, ...srvSegs(o, cfg.dossierOffre)].filter(Boolean).join(' \\ ');
     o.dossierServeur = full; hist(o, 'Dossier serveur', full); await saveOffre(o); render();
     toast('Offre enregistrée dans ' + full);
@@ -1799,7 +1804,7 @@ async function srvZip(o) {
   try {
     const pdf = new Uint8Array(await (await pdfBlob(o)).arrayBuffer()), docx = new Uint8Array(await (await buildDocx(o)).arrayBuffer());
     for (const d of [...dirs].sort()) files.push({ name: d, data: new Uint8Array(0) });
-    files.push({ name: target + '/' + base + '.pdf', data: pdf }, { name: target + '/' + base + '.docx', data: docx });
+    files.push({ name: target + '/' + base + '.pdf', data: pdf }, { name: target + '/' + base + '.docx', data: docx }, { name: target + '/' + bddFileName(o), data: new Uint8Array(await bddXlsx(o).arrayBuffer()) });
     const a = document.createElement('a'); a.href = URL.createObjectURL(storeZip(files)); a.download = String(path[path.length - 1] || 'Projet').normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '.zip'; // nom du .zip sans accents (le dossier à l'intérieur les garde)
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
     hist(o, 'Dossier projet (.zip)', top); await saveOffre(o);
@@ -1849,7 +1854,7 @@ function mailResume(o) {
   const op = o.options, b = o.batiment;
   switch (o.type) {
     case 'CECB':
-      if (op.prestation === 'Mise à jour CECB') return `Nous vous proposons la mise à jour du CECB existant${majMotif(op) ? ' suite à ' + majMotif(op) : ''}, ${op.majVisite !== false ? 'visite du bâtiment et ' : ''}frais de publication compris.`;
+      if (op.prestation === 'Mise à jour CECB') return `Nous vous proposons la mise à jour du CECB existant${majMotif(op) ? ' suite à ' + majMotif(op) : ''}, ${op.majVisite ? 'visite du bâtiment et ' : 'sur la base des documents fournis, '}frais de publication compris.`;
       if (op.prestation === 'CECB Plus') return `Nous vous proposons l'établissement d'un CECB Plus avec le rapport de conseils (jusqu'à 3 variantes de rénovation, estimation des coûts et des subventions)${op.subvCantonale ? ', ainsi que la gestion de la subvention cantonale qui vous est offerte' : ''}.${op.chauffren ? ' Le conseil incitatif « Chauffez-renouvelable » est également compris.' : ''}`;
       return "Nous vous proposons l'établissement du CECB de votre bâtiment, visite et frais de publication compris.";
     case 'EN': case 'MIN': {
@@ -1892,6 +1897,118 @@ async function emlBlob(o, to, subject, body) {
     `--${bnd}--`, ''].join('\r\n');
   return new Blob([eml], { type: 'message/rfc822' });
 }
+
+'use strict';
+/* ============================================================ ligne(s) pour la base de données Excel des mandats (colonnes D à Z, C et S en formule)
+   Une ligne par mandat de l'offre. Fichier .xlsx déposé dans le dossier « 3. Offre » avec le PDF et le Word. */
+const BDD_HEAD = [['A', 'Cellules vides'], ['B', 'Statut'], ['C', 'En cours pour qui'], ['D', 'Code \nmandat'], ['E', 'Type mandat'], ['F', 'Nr projet'], ['G', 'Nom projet'], ['H', 'Adresse projet'], ['I', 'Remarques'], ['J', 'Nom client'], ['K', 'Canton'], ['L', 'Description'], ['M', "Catégorie d'ouvrage\n"], ['N', 'SRE/nbre unités utilisations'], ['O', 'Prix/m2 ou unités'], ['P', 'Bureau'], ['Q', 'Offre établie par'], ['R', 'Offre envoyée le'], ['S', 'Offre valable ou échue'], ['T', 'N°offre'], ['U', "Type d'offre"], ['V', 'Prix offre HT'], ['W', 'Prix offre TTC'], ['X', 'Contrôle montant mandat'], ['Y', 'Frais externes TTC'], ['Z', 'Transmise pour paiement le'],
+  ['AA', 'Gr OFFRE'], ['AB', 'Offre validée le'], ['AC', 'Attribué le '], ['AD', 'Adresse de facturation'], ['AE', 'Mode de facturation'], ['AF', 'Expert'], ['AG', 'Délai'], ['AH', 'Gr ATTRIBUTION'], ['AI', 'Visité le / Subvention déposée le'], ['AJ', 'Montant trimestriel proposé TTC'], ['AK', 'Trimestre proposé'], ['AL', 'Remise effectuée le / Subvention achevée le '], ['AM', "Nbre d'heures disponible"], ['AN', "Nbre d'heures effectuées"], ['AO', 'Solde heures'], ['AP', 'Gr INGENIEUR'], ['AQ', 'Montant mandat validé TTC'], ['AR', 'Montant prévu à facturer TTC'], ['AS', 'Total facturé HT'], ['AT', 'Total facturé TTC'], ['AU', 'Total payé TTC'], ['AV', 'Solde à facturer TTC'], ['AW', 'Prochaine facturation prévue'], ['AX', 'Dernière facture'], ['AY', 'Statut de facturation'], ['AZ', 'Alerte facturation trimestrielle'], ['BA', 'Gr SUIVI FACTURATION']];
+/* code mandat (D), type mandat (E) et description (L) par mandat – modifiables dans Paramètres */
+const BDD_MANDATS = {
+  CECB: { code: 'B967', type: 'CECB', desc: 'CECB' }, CECBP: { code: 'B967', type: 'CECB+', desc: 'CECB plus' }, CECBMAJ: { code: 'B967', type: 'CECB', desc: 'Mise à jour CECB' },
+  CHAUFF_REN: { code: 'B000', type: 'CHAUFF_REN', desc: 'Conseil incitatif chauffez-renouvelable' }, SUBV_CANT: { code: 'B000', type: 'SUBV', desc: 'Subvention cantonale CECB+' }, SUBV_COM: { code: 'B000', type: 'SUBV', desc: 'Subvention communale CECB+' },
+  THERMO_CECB: { code: 'B000', type: 'THERMO', desc: 'Étude thermographique CECB+' }, EN: { code: 'B400', type: 'EN', desc: 'Dossier énergétique' },
+  MIN_P: { code: 'B400', type: 'MINERGIE', desc: 'Minergie provisoire et dossier énergétique (phase projet)' }, MIN_R: { code: 'B400', type: 'MINERGIE', desc: 'Minergie définitif (phase réalisation)' },
+  PI_P: { code: 'B450', type: 'PI_P', desc: 'Prestations PI pour la phase projet (SIA 3.32 et 3.33)' }, PI_R: { code: 'B450', type: 'PI_R', desc: 'Prestations PI pour la phase réalisation (SIA 4.41 à 5.53)' },
+  SUBV: { code: 'B000', type: 'SUBV', desc: 'Gestion des subventions Programme Bâtiments' }, AMO: { code: 'B000', type: 'AMO', desc: "Assistance au maître d'ouvrage énergie" },
+  THERMO: { code: 'B000', type: 'THERMO', desc: 'Étude thermographique' }, CONF: { code: 'B000', type: 'CONF', desc: 'Contrôle de conformité' }, LIBRE: { code: '', type: '', desc: '' },
+};
+const bddMap = (k) => ({ ...(BDD_MANDATS[k] || {}), ...((S.settings.bdd && S.settings.bdd.mandats && S.settings.bdd.mandats[k]) || {}) });
+function bddMandatKey(o, b, i) {
+  if (o.type === 'CECB') { if (b.key === 'chauffren') return 'CHAUFF_REN'; if (/thermograph/i.test(b.summaryLabel || '')) return 'THERMO_CECB';
+    return { 'CECB Plus': 'CECBP', 'Mise à jour CECB': 'CECBMAJ' }[o.options.prestation] || 'CECB'; }
+  if (o.type === 'PI') return b.key === 'R' || /REALISATION/i.test(b.title) ? 'PI_R' : 'PI_P';
+  if (o.type === 'MIN') return /R[ÉE]ALISATION/i.test(b.title) ? 'MIN_R' : 'MIN_P';
+  return o.type;
+}
+/* catégorie d'ouvrage : R (rénovation) ou N (neuf) + n° de catégorie SIA 380/1 (I habitat collectif … XII piscines) */
+const GKLAS_SIA = { 1110: 2, 1121: 2, 1122: 1, 1130: 1, 1211: 6, 1212: 6, 1220: 3, 1230: 5, 1231: 6, 1241: 7, 1242: 10, 1251: 9, 1252: 10, 1261: 7, 1262: 7, 1263: 4, 1264: 8, 1265: 11, 1271: 9, 1272: 7, 1273: 7, 1274: 3 };
+function bddCategorie(o) {
+  const b = o.batiment, idx = (lbl) => SIA_CATS.findIndex((c) => c[0] === lbl) + 1;
+  let n = 0; const zs = Array.isArray(o.options.zones) ? o.options.zones.filter((z) => z.cat1) : [];
+  if (zs.length) n = idx(zs.reduce((a, z) => (num(z.sre) > num(a.sre) ? z : a)).cat1);
+  if (!n && b.gklas && GKLAS_SIA[b.gklas]) n = GKLAS_SIA[b.gklas];
+  if (!n) n = { ind: 2, coll: 1, hors: 3 }[b.categorie] || 2;
+  const neuf = b.neuf || (o.options.nature === 'nouvelle construction');
+  return (neuf ? 'N' : 'R') + n;
+}
+/* remarque interne au format de la base : « NEF03.11.2026: texte » */
+function bddRemarque(o) {
+  const t = String(o.projet.description || '').trim(); if (!t) return '';
+  if (/^[A-Z]{2,4}\d{2}\.\d{2}\.\d{4}\s*:/.test(t)) return t;
+  const d = String(o.dateCreation || today()).slice(0, 10).split('-').reverse().join('.');
+  return `${(S.settings.bdd && S.settings.bdd.initiales) || ''}${d}: ${t}`;
+}
+function bddRows(o) {
+  const st = S.settings, b0 = o.batiment, c = o.client, tva = num(st.tva) / 100, rows = [];
+  const unites = ['CECB', 'SUBV'].includes(o.type) ? (num(b0.logements) || 1) : Math.round(num(b0.sre) || 0);
+  const client = [c.nom, c.societe, c.adresse, [c.npa, c.localite].filter(Boolean).join(' ')].filter((x) => String(x || '').trim()).join('\n');
+  const date = (o.envoi && o.envoi.date) || o.dateCreation;
+  const base = (k, extra) => { const m = bddMap(k); return { D: m.code, E: m.type, F: (st.bdd && st.bdd.nrProjet) || 'Z_ATT', G: o.projet.nom || '', H: (b0.adresse || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*$/, ''), I: bddRemarque(o), J: client, K: b0.canton || '', L: m.desc, M: bddCategorie(o), N: unites, P: 'batismart', Q: (st.bdd && st.bdd.initiales) || '', R: date, T: o.numero, X: 'À vérifier', Z: 'na', ...extra }; };
+  (o.blocks || []).filter((b) => !b.exclude && b.kind !== 'summary').forEach((b, i) => {
+    const t = blockTotals(b, o), W = num(t.arrondi), pub = (b.lines || []).filter((l) => /frais de publication/i.test(l.label)).reduce((s, l) => s + num(l.pu) * num(l.qty || 1), 0);
+    const r = base(bddMandatKey(o, b, i), { U: b.mode === 'heures' ? 'Devis' : 'Forfait', W, V: W / (1 + tva), Y: r2(pub) });
+    if (b.variant) r.L += ' (variante)';
+    r.O = r.N ? W / r.N : 0; rows.push(r);
+  });
+  if (o.type === 'CECB' && o.options.prestation === 'CECB Plus') {
+    if (o.options.subvCantonale) rows.push(base('SUBV_CANT', { U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
+    if (o.options.subvCommunale) rows.push(base('SUBV_COM', { U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
+  }
+  return rows;
+}
+/* formules C (texte, comme dans la base) et S (calculée sur la ligne) */
+const BDD_C = '=SI(OU(B3670="en cours";B3670="en pause");AF3670;SI(ET(B3670=Menus!$B$10;NB.SI.ENS(T_Factures[N° projet];F3670;T_Factures[Type mandat];E3670;T_Factures[N° offre / avenant];T3670;T_Factures[Facturé le];"";T_Factures[Statut technique];"<>Annulé";T_Factures[Remarque pour facture];"*Source Projets ligne "&LIGNE()&"*")>0);"À facturer";""))';
+const bddS = (r) => `IFERROR(IF(AND(TODAY()-R${r}>60,ISBLANK(AB${r}),NOT(ISBLANK(R${r}))),"OFFRE ECHUE A ANNULER",IF(AND(TODAY()-R${r}>30,ISBLANK(AB${r})*NOT(ISBLANK(R${r}))),"A RELANCER","-")),"")`;
+const xdate = (iso) => { if (!iso) return null; const d = new Date(String(iso).slice(0, 10) + 'T00:00:00Z'); return Math.round(d.getTime() / 86400000) + 25569; };
+function bddXlsx(o) {
+  const X = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const hdrStyle = (col) => (['AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH'].includes(col) ? 2 : ['AI', 'AJ', 'AK', 'AL', 'AM', 'AN', 'AO', 'AP'].includes(col) ? 3 : /^A[Q-Z]$|^BA$/.test(col) ? 4 : 1);
+  const str = (ref, v, s = 5) => `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`;
+  const numc = (ref, v, s = 5) => `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
+  let xml = `<row r="1" ht="82.5" customHeight="1">${BDD_HEAD.map(([c, h]) => str(c + '1', h, hdrStyle(c))).join('')}</row>`;
+  bddRows(o).forEach((r, i) => {
+    const n = i + 2, cells = [str('C' + n, BDD_C)];
+    for (const col of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
+      if (col === 'S') { cells.push(`<c r="S${n}" s="5" t="str"><f>${X(bddS(n))}</f></c>`); continue; }
+      const v = r[col]; if (v == null || v === '') continue;
+      if (col === 'R') { const d = xdate(v); if (d) cells.push(numc('R' + n, d, 6)); continue; }
+      if (['N', 'O', 'T', 'V', 'W', 'Y'].includes(col) && v !== '' && !isNaN(+v)) cells.push(numc(col + n, +v, col === 'V' || col === 'O' ? 7 : 5));
+      else cells.push(str(col + n, v));
+    }
+    xml += `<row r="${n}" ht="15" customHeight="1">${cells.join('')}</row>`; // lignes fines (texte coupé à la largeur, comme dans la base)
+  });
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="53" width="13" customWidth="1"/></cols><sheetData>${xml}</sheetData><dataValidations count="2"><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="U2:U50"><formula1>"Devis,Forfait,Régie"</formula1></dataValidation><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="X2:X50"><formula1>"À vérifier,Vérifié"</formula1></dataValidation></dataValidations></worksheet>`;
+  const fill = (rgb) => `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
+  const bd = '<left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/>';
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd.mm.yyyy"/></numFmts>
+<fonts count="3"><font><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font><font><b/><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font><font><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font></fonts>
+<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fill('FFFFC000')}${fill('FFFFFF00')}${fill('FF00B0F0')}${fill('FFFFD966')}</fills>
+<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>${bd}</border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="164" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="2" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const R = (id, type, t) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${t}"/>`;
+  const rels = (x) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${x}</Relationships>`;
+  const files = [
+    ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
+    ['_rels/.rels', rels(R('rId1', 'officeDocument', 'xl/workbook.xml'))],
+    ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Feuil1" sheetId="1" r:id="rId1"/></sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>'],
+    ['xl/_rels/workbook.xml.rels', rels(R('rId1', 'worksheet', 'worksheets/sheet1.xml') + R('rId2', 'styles', 'styles.xml'))],
+    ['xl/worksheets/sheet1.xml', sheet], ['xl/styles.xml', styles],
+  ];
+  const enc = new TextEncoder();
+  return new Blob([storeZip(files.map(([name, d]) => ({ name, data: enc.encode(d) })))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+const bddFileName = (o) => pdfFileName(o).replace(/_Offre_/, '_BDD_').replace(/\.pdf$/, '.xlsx');
+function bddDownload(o) { const a = document.createElement('a'); a.href = URL.createObjectURL(bddXlsx(o)); a.download = bddFileName(o); document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
 
 'use strict';
 /* ============================================================ assistant « Nouvelle offre » : 4 étapes, une question par écran */
@@ -1995,6 +2112,7 @@ function wFin(o) {
   <div class="wiz-price card"><div><span>Total TTC</span><strong>${fmtCHF(mont)} CHF</strong>${net !== mont && !blocks.some((b) => b.variant) ? `<em>Coût réel pour le client après subventions : ${fmtCHF(net)} CHF</em>` : ''}</div>
     <ul>${blocks.map((b) => `<li><span>${esc(b.summaryLabel || b.title)}${b.variant ? ' (variante)' : ''}</span><b>${fmtCHF(blockTotals(b, o).arrondi)}</b></li>`).join('')}</ul></div>
   ${quick.length ? `<div class="card wiz-card"><h3>Ajuster en un clic</h3><div class="grid g2">${quick.map((f) => optField(o, f)).join('')}</div></div>` : ''}
+  <div class="card wiz-card"><label class="f">Commentaire interne (repris dans la colonne « Remarques » de la base de données)<textarea data-bind="projet.description" placeholder="ex. Lignes CHAUFF-REN et SUBV à ajouter en cas de validation" style="min-height:56px">${esc(o.projet.description || '')}</textarea></label></div>
   ${o.type === 'PI' ? hauteurPanel(o) : ''}
   ${['CECB', 'EN', 'MIN', 'PI'].includes(o.type) ? `<details class="card wiz-card"><summary><b>Complexité du bâtiment : ${esc(S.baremes.complexite.niveaux[cxNiveau(o.batiment)].label)}</b>${cxPct(o.batiment) ? ` (+${cxPct(o.batiment)} %)` : ''}</summary>${cxPanel(o, true)}</details>` : ''}
   <div class="wiz-actions">
@@ -2398,7 +2516,7 @@ function vOffre() {
   const T = TYPES[o.type], t = VIEW.tab;
   const tabs = [['client', 'Client & projet'], ['bat', 'Bâtiment'], ['prest', 'Prestations & devis'], ['txt', 'Textes'], ['hist', 'Historique']];
   return `<div class="editbar"><a class="btn ghost" href="#/dash">←</a><div class="grow"><b class="mono">${esc(o.numero)}</b> · ${esc(T.label)} <span class="note">· ${esc(o.projet.nom || 'sans projet')}</span></div>
-    ${stSelect(o)}<button class="btn" data-act="preview">Aperçu PDF</button><button class="btn" data-act="pdf" data-id="${o.id}">Télécharger PDF</button><button class="btn" data-act="docx" data-id="${o.id}" title="Version Word modifiable">Word</button><button class="btn" data-act="srvZip" data-id="${o.id}" title="Télécharge le dossier du projet (${esc(srvPath(o).join(' \\ '))}) avec le PDF et le Word, prêt à coller sur le serveur">📁 Créer le dossier</button>${S.settings.serveur.racine ? `<button class="btn ghost" data-act="srv" data-id="${o.id}" title="${o.dossierServeur ? 'Mettre à jour : ' + esc(o.dossierServeur) : 'Écrire directement dans le dossier racine choisi dans Paramètres'}">Écrire sur le serveur${o.dossierServeur ? ' ✓' : ''}</button>` : ''}<button class="btn pri" data-act="send" data-id="${o.id}">Envoyer</button>
+    ${stSelect(o)}<button class="btn" data-act="preview">Aperçu PDF</button><button class="btn" data-act="pdf" data-id="${o.id}">Télécharger PDF</button><button class="btn" data-act="docx" data-id="${o.id}" title="Version Word modifiable">Word</button><button class="btn" data-act="bdd" data-id="${o.id}" title="Ligne(s) pour la base de données des mandats (Excel)">📊 Ligne BDD</button><button class="btn" data-act="srvZip" data-id="${o.id}" title="Télécharge le dossier du projet (${esc(srvPath(o).join(' \\ '))}) avec le PDF et le Word, prêt à coller sur le serveur">📁 Créer le dossier</button>${S.settings.serveur.racine ? `<button class="btn ghost" data-act="srv" data-id="${o.id}" title="${o.dossierServeur ? 'Mettre à jour : ' + esc(o.dossierServeur) : 'Écrire directement dans le dossier racine choisi dans Paramètres'}">Écrire sur le serveur${o.dossierServeur ? ' ✓' : ''}</button>` : ''}<button class="btn pri" data-act="send" data-id="${o.id}">Envoyer</button>
     <button class="btn ghost" data-act="dup" data-id="${o.id}">Dupliquer</button><button class="btn ghost danger" data-act="delOffre">Supprimer</button></div>
   <div class="split"><div><div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="tabc">${{ client: tClient, bat: tBat, prest: tPrest, txt: tTxt, hist: tHist }[t](o)}</div></div>
   <aside id="aside">${aside(o)}</aside></div>`;
@@ -2487,7 +2605,7 @@ function tClient(o) {
       <label class="f">Nom du projet ${o.projet.nomAuto !== false ? '<span class="badge ok">automatique : rue et n° + localité</span>' : '<span class="badge">saisi à la main</span>'}<input type="text" data-bind="projet.nom" value="${esc(o.projet.nom)}" placeholder="renseigner le bâtiment pour le générer"></label></div>
     <div class="row" style="margin-top:6px"><label class="f chk"><input type="checkbox" data-bind="projet.nomAuto" data-type="bool" ${o.projet.nomAuto !== false ? 'checked' : ''}>Générer le nom du projet automatiquement</label></div>
     <div class="grid g2" style="margin-top:12px">${F('Adresse du chantier', 'projet.adresse', o.projet.adresse, 'text', 'placeholder="par défaut : adresse du bâtiment"')}</div>
-    <label class="f" style="margin-top:12px">Description du projet (interne)<textarea data-bind="projet.description">${esc(o.projet.description)}</textarea></label>
+    <label class="f" style="margin-top:12px">Commentaire interne (colonne « Remarques » de la base de données)<textarea data-bind="projet.description">${esc(o.projet.description)}</textarea></label>
     <label class="f" style="margin-top:12px">Remarques (imprimées sur l'offre, section « Remarques »)<textarea data-bind="remarques">${esc(o.remarques)}</textarea></label></div></div>`;
 }
 function tBat(o) {
@@ -2746,6 +2864,10 @@ function vParams() {
     <div class="grid g2">${P('Nom du dossier projet (/ = sous-niveau)', 'serveur.pattern', 'text', 'placeholder="{dossier}"')}${P("Sous-dossier où enregistrer l'offre (vide = racine du projet)", 'serveur.dossierOffre', 'text', 'placeholder="ex. 01_Offre"')}
     <label class="f">Sous-dossiers à créer (un par ligne)<textarea data-set="serveur.sousDossiers" placeholder="01_Offre&#10;02_Documents client&#10;03_Calculs" style="min-height:90px">${esc(s.serveur.sousDossiers)}</textarea></label>
     <div class="note" style="align-self:end">Variables : {dossier} (rue sans « Chemin du… » + n° + localité) {prestation} (CECB, Dossier EN, Minergie, Protection incendie…) {numero} {projet} {client} {type} {annee} {aa} {mois} {localite}<br>Par défaut : <span class="mono">{dossier}</span> → <span class="mono">Couchant 41 Granges-de-Vesin</span>, <span class="mono">Platy 45 Villars-sur-Glâne</span></div></div></div>
+  <div class="card"><h2>Base de données des mandats (Excel)</h2><div class="note" style="margin-bottom:10px">Une ligne par mandat (colonnes C à Z) est générée dans « 3. Offre » avec le PDF et le Word, et via le bouton « 📊 Ligne BDD ».</div>
+    <div class="grid g3">${P('Offre établie par (initiales, col. Q)', 'bdd.initiales')}${P('Nr projet par défaut (col. F)', 'bdd.nrProjet')}</div>
+    <div class="tblwrap" style="margin-top:10px"><table class="tbl lines" style="min-width:640px"><thead><tr><th>Mandat</th><th>Code mandat (D)</th><th>Type mandat (E)</th><th>Description (L)</th></tr></thead><tbody>
+    ${Object.keys(BDD_MANDATS).filter((k) => k !== 'LIBRE').map((k) => { const m = bddMap(k); return `<tr><td class="note">${esc(k)}</td><td><input type="text" data-set="bdd.mandats.${k}.code" value="${esc(m.code)}"></td><td><input type="text" data-set="bdd.mandats.${k}.type" value="${esc(m.type)}"></td><td><input type="text" data-set="bdd.mandats.${k}.desc" value="${esc(m.desc)}"></td></tr>`; }).join('')}</tbody></table></div></div>
   <div class="card"><h2>Mise en page des offres</h2><label class="f chk"><input type="checkbox" data-set="sectionParPage" data-type="bool" ${s.sectionParPage !== false ? 'checked' : ''}>Une section par page (chaque titre commence sur une nouvelle page ; la première reste sous l'introduction)</label></div>
   <div class="card"><h2>E-mail</h2><label class="f">Signature des e-mails<textarea data-set="mailSignature">${esc(s.mailSignature)}</textarea></label></div>
   <div class="card"><h2>Données</h2><div class="note" style="margin-bottom:10px">Tout est stocké dans ce navigateur (IndexedDB). Exportez régulièrement une sauvegarde ; pour changer de poste, importez-la sur l'autre navigateur. Dernière sauvegarde : ${s.lastExport ? fmtDateTime(s.lastExport) : 'jamais'}.</div>
@@ -2860,6 +2982,7 @@ async function onClick(e) {
     case 'docx': docxDownload(byId); break;
     case 'srv': srvCreate(byId); break;
     case 'srvZip': srvZip(byId); break;
+    case 'bdd': bddDownload(byId); break;
     case 'dossierLibre': dossierLibreModal(); break;
     case 'srvPick': srvPick(); break;
     case 'send': sendModal(byId); break;
