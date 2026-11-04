@@ -483,7 +483,7 @@ body.noscroll{overflow:hidden}
         <div class="actions" style="margin:6px 0 10px"><button type="button" id="qw-3d-go">▭ Poser sur la 3D</button><button type="button" class="ghost" id="qw-photo">📷 Photo de façade</button></div>
         <h3 style="margin:8px 0 4px;font-size:14px">Types</h3>
         <div class="tablewrap"><table class="edit" id="qw-types"><thead><tr><th>Type</th><th>Genre</th><th class="n">Larg. m</th><th class="n">Haut. m</th><th class="n">m²</th><th></th></tr></thead><tbody></tbody></table></div>
-        <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="qw-addf">+ Type de fenêtre</button><button type="button" class="ghost sm" id="qw-addp">+ Type de porte</button></div>
+        <div class="actions" style="margin-top:6px"><button type="button" class="ghost sm" id="qw-addf">+ Type de fenêtre</button><button type="button" class="ghost sm" id="qw-addp">+ Type de porte</button><button type="button" class="ghost sm" id="qw-addv">+ Type de velux</button></div>
         <h3 style="margin:12px 0 4px;font-size:14px">Nombre par façade</h3>
         <div class="tablewrap"><table class="edit" id="qw-mat"></table></div>
         <p class="note" id="qw-3d"></p>
@@ -3920,6 +3920,16 @@ function build3D(){
   let nWin = 0, nOff = 0; T3.winPick = [];
   (S.extra.fenetres || []).forEach((f) => {
     if(!(f.l > 0 && f.h > 0)) return;
+    if(f.pos3 && res.pans[f.pos3.pi]){                                // velux posé dans la 3D : rectangle sur le plan du pan (l le long de l'égout, h en rampant)
+      const p3 = f.pos3, pan = res.pans[p3.pi], pitched = pan.az != null && pan.tilt > 3, a = pitched ? pan.az * Math.PI / 180 : 0;
+      const sd = pitched ? [Math.sin(a), Math.cos(a)] : [0, 1], rd = [-sd[1], sd[0]], hp = f.h * (pitched ? Math.cos(pan.tilt * Math.PI / 180) : 1);
+      const c = (u, v) => { const x = p3.E + rd[0] * u + sd[0] * v, y = p3.N + rd[1] * u + sd[1] * v, z = faceZ(p3.pi, x, y); return P([x, y, (z != null ? z : p3.Z) + 0.04], 0); };
+      const A = c(-f.l / 2, hp / 2), B = c(f.l / 2, hp / 2), C2 = c(f.l / 2, -hp / 2), D = c(-f.l / 2, -hp / 2);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3));
+      const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      wm.userData.win = f.uid; g.add(wm); T3.winPick.push(wm);
+      wm.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v))), new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
+      nWin += f.nombre || 1; return; }
     if(/^Pan /.test(f.facade || '') && f.pos){                       // fenêtre de toit : projetée sur le pan
       const fac = f.facade.slice(4), loc = locateOn(fac, f.pos.s), pan = panFor(fac);
       if(!loc || !pan){ nOff++; return; }
@@ -4321,6 +4331,9 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
   const winOf = new Map(), open = {};
   (S.extra.fenetres || []).forEach((f) => {
     let pc = null; const fac = (f.facade || '').replace(/^Pan /, '');
+    if(f.pos3 && res.pans[f.pos3.pi]){ const pi = f.pos3.pi, cand = pieces.filter((q) => q.kind === 'toit' && q.pan === pi);       // velux posé dans la 3D
+      pc = cand.find((q) => q.rpolys && q.rpolys.some(({ mp }) => mp.some((pg) => inRing2(pg[0], f.pos3.E, f.pos3.N)))) || byKey.get('T|' + pi) || cand.sort((a, c) => c.area - a.area)[0] || null; }
+    else
     if(/^Pan /.test(f.facade || '')){ const pan = panFor(fac); if(pan){ const pi = res.pans.indexOf(pan); pc = byKey.get('T|' + pi) || pieces.filter((q) => q.kind === 'toit' && q.pan === pi).sort((a, c) => c.area - a.area)[0] || null; } }
     else if(f.pos && fac){ const loc = locateOn(fac, f.pos.s); if(loc){ const ei = res.edges.indexOf(loc.e), zc = zAbs(fac, f.pos) + (f.h || 0) / 2;
       const cand = pieces.filter((p) => p.kind === 'mur' && p.edge === ei);
@@ -5003,27 +5016,32 @@ function pick3D(ev){
    La saisie rapide génère des ouvertures (gen 'quick', sans position : rattachées à la partie de façade choisie).
    Les fenêtres posées dans la 3D (gen '3d') ont une position et suivent les dimensions de leur type. */
 const WT = () => (S.extra.wtypes = S.extra.wtypes || []);
-function wtNew(kind, l, h){ const ts = WT(), pre = kind === 'Porte' ? 'P' : 'F'; let k = 1; while(ts.some((t) => t.id === pre + k)) k++;
+const WKINDS = ['Fenêtre', 'Porte', 'Velux'], WDEF = { 'Fenêtre': [1.2, 1.4], 'Porte': [1.0, 2.1], 'Velux': [0.78, 1.18] };
+const wType = (k) => (k === 'Porte' ? 'Porte' : 'Fenêtre');     // genre exporté (un velux est une fenêtre de toit)
+function wtNew(kind, l, h){ const ts = WT(), pre = kind === 'Porte' ? 'P' : kind === 'Velux' ? 'V' : 'F'; let k = 1; while(ts.some((t) => t.id === pre + k)) k++;
   const t = { id: pre + k, kind, l, h }; ts.push(t); return t; }
 // parties de façade (orientation + nom de la partie) : colonnes de la saisie rapide
 function wParts(){
   if(!S.res) return []; const DC = cecbData(), m = new Map();
   DC.pieces.forEach((p) => { if(p.kind !== 'mur' || p.ter !== 'hs' || p.type === C.OUT || (p.band === 'bas' && S.extra.soussol !== 'chauffé')) return;
     const k = `${p.orientation}|${p.zone || ''}`, x = m.get(k) || { k, ori: p.orientation, zone: p.zone || '', A: 0 }; x.A += p.area; m.set(k, x); });
+  S.res.pans.forEach((pn) => { if(pn.az == null || pn.tilt <= 3) return; const ori = 'Pan ' + C.sector(pn.az), k = `${ori}|`; const x = m.get(k) || { k, ori, zone: '', A: 0, roof: true }; x.A += pn.A; m.set(k, x); });
   Object.keys(S.extra.wqty || {}).forEach((q) => { const [, ori, zone] = q.split('|'); const k = `${ori}|${zone || ''}`; if(!m.has(k)) m.set(k, { k, ori, zone: zone || '', A: 0, gone: true }); });
-  return [...m.values()].sort((a, b) => C.SECTORS.indexOf(a.ori) - C.SECTORS.indexOf(b.ori) || a.zone.localeCompare(b.zone));
+  m.forEach((x) => { if(/^Pan /.test(x.ori)) x.roof = true; });
+  return [...m.values()].sort((a, b) => (a.roof ? 1 : 0) - (b.roof ? 1 : 0) || C.SECTORS.indexOf(a.ori.replace(/^Pan /, '')) - C.SECTORS.indexOf(b.ori.replace(/^Pan /, '')) || a.zone.localeCompare(b.zone));
 }
 function wSync(){                           // régénère les ouvertures de la saisie rapide, met à jour celles posées en 3D
   const ts = WT(), byId = new Map(ts.map((t) => [t.id, t])), q = S.extra.wqty || {};
   S.extra.fenetres = (S.extra.fenetres || []).filter((f) => f.gen !== 'quick' && !(f.gen === '3d' && !byId.has(f.typeId)));
-  S.extra.fenetres.forEach((f) => { if(f.gen === '3d'){ const t = byId.get(f.typeId); f.l = t.l; f.h = t.h; f.type = t.kind; } });
+  S.extra.fenetres.forEach((f) => { if(f.gen === '3d'){ const t = byId.get(f.typeId); f.l = t.l; f.h = t.h; f.type = wType(t.kind); if(t.kind === 'Velux') f.velux = true; else delete f.velux; } });
   Object.entries(q).forEach(([k, n]) => { const [id, ori, zone] = k.split('|'), t = byId.get(id); if(!t || !(n > 0)) return;
-    S.extra.fenetres.push({ uid: 'q|' + k, gen: 'quick', typeId: id, type: t.kind, niveau: '', facade: ori, part: zone || null, nombre: n, l: t.l, h: t.h, note: `saisie rapide ${id}` }); });
+    if((t.kind === 'Velux') !== /^Pan /.test(ori)) return;               // velux : pans de toit ; fenêtres, portes : façades
+    S.extra.fenetres.push({ uid: 'q|' + k, gen: 'quick', typeId: id, type: wType(t.kind), velux: t.kind === 'Velux' || undefined, niveau: /^Pan /.test(ori) ? 'Combles' : '', facade: ori, part: zone || null, nombre: n, l: t.l, h: t.h, note: `saisie rapide ${id}` }); });
 }
 function renderQuick(){
   const box = $('qw'); if(!box) return; const ts = WT(), parts = wParts(), q = S.extra.wqty || {};
   const n3d = (id, pk) => (S.extra.fenetres || []).filter((f) => f.gen === '3d' && f.typeId === id && `${f.facade}|${(T3 && T3.dc && f.__part) || ''}` === pk).length;
-  $('qw-types').tBodies[0].innerHTML = ts.map((t, i) => `<tr data-t="${i}"><td class="mono"><b>${esc(t.id)}</b></td><td><select data-k="kind" aria-label="Genre ${esc(t.id)}">${opt(['Fenêtre', 'Porte'], t.kind)}</select></td>
+  $('qw-types').tBodies[0].innerHTML = ts.map((t, i) => `<tr data-t="${i}"><td class="mono"><b>${esc(t.id)}</b></td><td><select data-k="kind" aria-label="Genre ${esc(t.id)}">${opt(WKINDS, t.kind)}</select></td>
       <td class="n"><input type="number" step="0.01" min="0" data-k="l" value="${t.l || ''}" aria-label="Largeur ${esc(t.id)}"></td><td class="n"><input type="number" step="0.01" min="0" data-k="h" value="${t.h || ''}" aria-label="Hauteur ${esc(t.id)}"></td>
       <td class="n">${fmt((t.l || 0) * (t.h || 0))}</td><td><button type="button" class="x" data-tdel="${i}" title="Supprimer ce type (et ses fenêtres)">×</button></td></tr>`).join('')
     || '<tr><td colspan="6" class="note">Aucun type. Ajoutez p. ex. F1 = 1.20 × 1.40 m.</td></tr>';
@@ -5031,9 +5049,9 @@ function renderQuick(){
   if(!ts.length || !parts.length){ mat.innerHTML = `<tbody><tr><td class="note">${!S.res ? 'Analysez d\'abord le bâtiment (onglet 1).' : 'Ajoutez un type de fenêtre.'}</td></tr></tbody>`; return; }
   const placed = {}; (S.extra.fenetres || []).forEach((f) => { if(f.gen === '3d') placed[f.typeId + '|' + f.facade] = (placed[f.typeId + '|' + f.facade] || 0) + 1; });
   mat.innerHTML = `<thead><tr><th>Type</th>${parts.map((p) => `<th class="n" title="${esc(p.ori + (p.zone ? ' — ' + p.zone : ''))}${p.gone ? ' (partie disparue)' : ''}">${esc(p.ori)}${p.zone ? `<div class="note" style="font-weight:400">${esc(p.zone)}</div>` : ''}</th>`).join('')}<th class="n">Total m²</th></tr></thead>
-    <tbody>${ts.map((t) => { let tot = 0; return `<tr><td class="mono"><b>${esc(t.id)}</b> <span class="note">${fmt(t.l)}×${fmt(t.h)}</span></td>${parts.map((p) => { const k = `${t.id}|${p.k}`, v = q[k] || 0; tot += v * t.l * t.h;
+    <tbody>${ts.map((t) => { let tot = 0; return `<tr><td class="mono"><b>${esc(t.id)}</b> <span class="note">${fmt(t.l)}×${fmt(t.h)}</span></td>${parts.map((p) => { const k = `${t.id}|${p.k}`, v = q[k] || 0; if((t.kind === 'Velux') !== !!p.roof) return '<td class="n note">—</td>'; tot += v * t.l * t.h;
         return `<td class="n"><input type="number" min="0" step="1" class="qn" data-q="${esc(k)}" value="${v || ''}" placeholder="0" aria-label="${esc(t.id + ' ' + p.ori + ' ' + p.zone)}" style="width:58px"></td>`; }).join('')}<td class="n">${fmt(tot)}</td></tr>`; }).join('')}</tbody>
-    <tfoot><tr><td>Surface m²</td>${parts.map((p) => `<td class="n">${fmt(ts.reduce((s, t) => s + (q[`${t.id}|${p.k}`] || 0) * t.l * t.h, 0))}</td>`).join('')}<td></td></tr></tfoot>`;
+    <tfoot><tr><td>Surface m²</td>${parts.map((p) => `<td class="n">${fmt(ts.reduce((s, t) => s + ((t.kind === 'Velux') === !!p.roof ? (q[`${t.id}|${p.k}`] || 0) * t.l * t.h : 0), 0))}</td>`).join('')}<td></td></tr></tfoot>`;
   const pl = Object.entries(placed); $('qw-3d').textContent = pl.length ? `En plus, posées dans la 3D : ${pl.map(([k, n]) => `${n} × ${k.replace('|', ' ')}`).join(', ')}.` : '';
 }
 function wChanged(){ wSync(); renderQuick(); renderComp(); complementsChanged(); }
@@ -5047,6 +5065,7 @@ $('qw-mat').addEventListener('change', (e) => { const i = e.target.closest('inpu
   S.extra.wqty = S.extra.wqty || {}; if(v) S.extra.wqty[i.dataset.q] = v; else delete S.extra.wqty[i.dataset.q]; wChanged(); });
 $('qw-addf').onclick = () => { wtNew('Fenêtre', 1.2, 1.4); wChanged(); };
 $('qw-addp').onclick = () => { wtNew('Porte', 1.0, 2.1); wChanged(); };
+$('qw-addv').onclick = () => { wtNew('Velux', 0.78, 1.18); wChanged(); };
 $('qw-photo').onclick = () => { S.photoNext = true; showTab('t-plans'); $('pl-file').click(); };
 $('qw-3d-go').onclick = () => { showTab('t-3d'); setTimeout(() => { if(T3 && !T3.winMode) setWinMode(true); }, 300); };
 
@@ -5063,12 +5082,15 @@ function renderWinPanel(){
   const f = T3.wsel && (S.extra.fenetres || []).find((x) => x.uid === T3.wsel);
   box.innerHTML = `<div class="d3h">Fenêtres <button type="button" class="ghost sm" id="w-end">Terminer</button></div>
     <label for="w-type">Type posé au clic</label><select id="w-type">${ts.map((t) => `<option value="${esc(t.id)}"${t.id === cur ? ' selected' : ''}>${esc(t.id)} — ${esc(t.kind)} ${fmt(t.l)} × ${fmt(t.h)} m</option>`).join('')}</select>
-    <div class="row" style="gap:6px;align-items:end;margin-top:4px"><input type="number" step="0.01" id="w-nl" placeholder="larg." style="width:70px" aria-label="Largeur nouveau type"><span>×</span><input type="number" step="0.01" id="w-nh" placeholder="haut." style="width:70px" aria-label="Hauteur nouveau type"><button type="button" class="ghost sm" id="w-new">+ type</button></div>
+    <div class="row" style="gap:6px;align-items:end;margin-top:4px;flex-wrap:wrap"><select id="w-nk" aria-label="Genre du nouveau type" style="width:96px">${opt(WKINDS, T3.wNk || 'Fenêtre')}</select><input type="number" step="0.01" id="w-nl" placeholder="larg." style="width:64px" aria-label="Largeur nouveau type"><span>×</span><input type="number" step="0.01" id="w-nh" placeholder="haut." style="width:64px" aria-label="Hauteur nouveau type"><button type="button" class="ghost sm" id="w-new">+ type</button></div>
+    <div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap">${WKINDS.map((k) => `<button type="button" class="ghost sm" data-wk="${k}">${k === 'Fenêtre' ? '▭' : k === 'Porte' ? '🚪' : '◇'} ${k}</button>`).join('')}</div>
     ${f ? `<div class="note" style="margin-top:6px">Sélection : <b>${esc(f.typeId || '')}</b> ${fmt(f.l)} × ${fmt(f.h)} m, ${esc(f.facade)} <button type="button" class="ghost sm" id="w-del">Supprimer</button></div>` : ''}
-    <p class="note" style="margin:6px 0 0">Clic sur une façade : poser · glisser une fenêtre : déplacer (alignement automatique sur les autres) · Ctrl + glisser : dupliquer · Suppr : effacer · Ctrl+Z : annuler</p>`;
+    <p class="note" style="margin:6px 0 0">Clic sur une façade (fenêtre, porte : posée au ±0.00 si proche) ou sur un pan de toit (velux) : poser · glisser une fenêtre : déplacer (alignement automatique sur les autres) · Ctrl + glisser : dupliquer · Suppr : effacer · Ctrl+Z : annuler</p>`;
   $('w-type').onchange = (e) => { T3.wType = e.target.value; };
   $('w-end').onclick = () => setWinMode(false);
-  $('w-new').onclick = () => { const l = parseFloat($('w-nl').value), h = parseFloat($('w-nh').value); if(!(l > 0 && h > 0)) return; const t = wtNew('Fenêtre', l, h); T3.wType = t.id; wChanged(); renderWinPanel(); };
+  $('w-nk').onchange = (e) => { T3.wNk = e.target.value; const d = WDEF[T3.wNk]; $('w-nl').placeholder = d[0].toFixed(2); $('w-nh').placeholder = d[1].toFixed(2); };
+  $('w-new').onclick = () => { const k = $('w-nk').value, d = WDEF[k], l = parseFloat($('w-nl').value) || d[0], h = parseFloat($('w-nh').value) || d[1]; const t = wtNew(k, l, h); T3.wType = t.id; wChanged(); renderWinPanel(); };
+  box.querySelectorAll('[data-wk]').forEach((b) => { b.onclick = () => { const k = b.dataset.wk; let t = WT().find((x) => x.kind === k); if(!t){ const d = WDEF[k]; t = wtNew(k, d[0], d[1]); wChanged(); } T3.wType = t.id; renderWinPanel(); }; });
   if($('w-del')) $('w-del').onclick = () => wDelete();
 }
 function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenetres = S.extra.fenetres.filter((x) => x.uid !== u);
@@ -5100,24 +5122,34 @@ function wPosAt(fac, E, N, zb, w, exceptUid){
   return { pos: { s: +((t - F.t0) / F.W).toFixed(4), dR: +(ridge3D() - zb).toFixed(3) }, snapT, snapZ };
 }
 function wPlace(hit, p){
-  if(p.kind !== 'mur' || !(p.edge >= 0)){ hint3('Cliquez sur une façade.'); return; }
   const t = WT().find((x) => x.id === T3.wType); if(!t) return;
-  const e = S.res.edges[p.edge], o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2];
-  const r = wPosAt(e.orientation, E, N, Z - t.h / 2, t.l); if(!r) return;
-  const f = { uid: uid(), gen: '3d', typeId: t.id, type: t.kind, niveau: '', facade: e.orientation, nombre: 1, l: t.l, h: t.h, pos: r.pos, note: `posée en 3D ${t.id}` };
+  const o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2];
+  if(t.kind === 'Velux'){
+    if(p.kind !== 'toit'){ hint3('Velux : cliquez sur un pan de toit.'); return; } const pan = S.res.pans[p.pan];
+    const f = { uid: uid(), gen: '3d', typeId: t.id, type: 'Fenêtre', velux: true, niveau: 'Combles', facade: pan.az != null ? 'Pan ' + C.sector(pan.az) : 'Toit plat', nombre: 1, l: t.l, h: t.h, pos3: { E: +E.toFixed(3), N: +N.toFixed(3), Z: +Z.toFixed(3), pi: p.pan }, note: `posé en 3D ${t.id}` };
+    S.extra.fenetres.push(f); T3.wsel = f.uid; renderWinPanel(); wChanged(); hint3(`${t.id} posé sur le ${f.facade.toLowerCase()} (${fmt(t.l)} × ${fmt(t.h)} m, rampant).`); return; }
+  if(p.kind !== 'mur' || !(p.edge >= 0)){ hint3(t.kind === 'Porte' ? 'Porte : cliquez sur une façade.' : 'Cliquez sur une façade (velux : choisissez un type Velux).'); return; }
+  const e = S.res.edges[p.edge]; let zb = Z - t.h / 2, onZero = false;
+  if(t.kind === 'Porte'){ const z0 = S.res.zRefB != null ? S.res.zRefB : S.res.tRef; if(Math.abs(zb - z0) < 1.2){ zb = z0; onZero = true; } }   // porte : seuil au ±0.00
+  const r = wPosAt(e.orientation, E, N, zb, t.l); if(!r) return;
+  if(onZero) r.pos.dR = +(ridge3D() - zb).toFixed(3);
+  const f = { uid: uid(), gen: '3d', typeId: t.id, type: wType(t.kind), niveau: '', facade: e.orientation, nombre: 1, l: t.l, h: t.h, pos: r.pos, note: `posée en 3D ${t.id}` };
   S.extra.fenetres.push(f); T3.wsel = f.uid; renderWinPanel(); wChanged();
   hint3(`${t.id} posée sur ${e.orientation}${r.snapT || r.snapZ ? ' (alignée' + (r.snapZ ? ' en hauteur' : '') + (r.snapT ? ' en axe' : '') + ')' : ''}.`);
 }
 function wDragStart(ev){
   if(!T3 || !T3.winMode || ev.button !== 0 || !T3.winPick || !T3.winPick.length) return false;
   const hit = ray3(ev).intersectObjects(T3.winPick, false)[0]; if(!hit) return false;
-  const f = (S.extra.fenetres || []).find((x) => x.uid === hit.object.userData.win); if(!f || !f.pos) return false;
+  const f = (S.extra.fenetres || []).find((x) => x.uid === hit.object.userData.win); if(!f || (!f.pos && !f.pos3)) return false;
+  if(f.pos3){ T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -hit.point.y), dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, v: true }; T3.ctl.enabled = false; T3.wsel = f.uid; return true; }
   const e = hit.object.userData.e, plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(e.n[0], 0, -e.n[1]), hit.point);
   T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane, dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, z0: zAbs(f.facade, f.pos), c0: null };
   const F = facFrame(f.facade); T3.wdrag.c0 = F.t0 + f.pos.s * F.W;
   T3.ctl.enabled = false; T3.wsel = f.uid; return true;
 }
 function wDragMove(ev){ const d = T3 && T3.wdrag; if(!d) return false; const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return true;
+  if(d.v){ const p3 = d.f.pos3, E = p3.E + (q.x - d.p0.x), N = p3.N - (q.z - d.p0.z), z = faceZ(p3.pi, E, N); if(z == null) return true;
+    d.r3 = { E: +E.toFixed(3), N: +N.toFixed(3), Z: +z.toFixed(3), pi: p3.pi }; d.moved = true; d.obj.position.set(E - p3.E, z - p3.Z, -(N - p3.N)); T3.render(); hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} — relâchez pour poser`); return true; }
   const F = facFrame(d.f.facade), dE = q.x - d.p0.x, dN = -(q.z - d.p0.z), dZ = q.y - d.p0.y;
   const tc = d.c0 + dE * F.r[0] + dN * F.r[1], E = tc * F.r[0], N = tc * F.r[1];       // point sur l'axe r (la composante normale est ignorée par wPosAt)
   const r = wPosAt(d.f.facade, E, N, d.z0 + dZ, d.f.l, d.dup ? null : d.f.uid); if(!r) return true; d.r = r; d.moved = true;
@@ -5125,7 +5157,8 @@ function wDragMove(ev){ const d = T3 && T3.wdrag; if(!d) return false; const q =
   d.obj.position.set(F.r[0] * ds, dz, -F.r[1] * ds); T3.render();
   hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} : ${r.snapZ ? 'allège alignée' : ''}${r.snapZ && r.snapT ? ', ' : ''}${r.snapT ? 'axe aligné' : ''}${!r.snapZ && !r.snapT ? 'relâchez pour poser' : ''}`); return true; }
 function wDragEnd(){ const d = T3 && T3.wdrag; if(!d) return false; T3.wdrag = null; T3.ctl.enabled = true;
-  if(d.moved && d.r){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos: d.r.pos }); delete c.fs; delete c.fsInfo; S.extra.fenetres.push(c); T3.wsel = c.uid; }
+  if(d.moved && d.r3){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos3: d.r3 }); S.extra.fenetres.push(c); T3.wsel = c.uid; } else d.f.pos3 = d.r3; }
+  else if(d.moved && d.r){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos: d.r.pos }); delete c.fs; delete c.fsInfo; S.extra.fenetres.push(c); T3.wsel = c.uid; }
     else { d.f.pos = Object.assign({}, d.f.pos, d.r.pos); delete d.f.pos.zA; delete d.f.pos.zB; delete d.f.fs; delete d.f.fsInfo; } }
   hint3(''); renderWinPanel(); wChanged(); return true; }
 $('d3-wmode').onclick = () => setWinMode(!(T3 && T3.winMode));
