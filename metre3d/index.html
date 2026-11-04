@@ -680,7 +680,7 @@ body.noscroll{overflow:hidden}
       const okZ = (t) => t.every((p) => p.length >= 3 && isFinite(p[2]));
       if (b.walls.length && !b.walls.every(okZ)) { b.wallsNoZ = b.walls.length; b.walls = []; }
     }
-    const roofs = (layers.Roof ? layers.Roof.features : []).map((f) => ({ egid: f.properties.EGID, faces: geomFaces(f.geometry) }));
+    const roofs = (layers.Roof ? layers.Roof.features : []).map((f) => ({ egid: f.properties.EGID, uuid: f.properties.UUID, faces: geomFaces(f.geometry) }));
     for (const b of blds.values()) computeFootprint(b);
     return { blds: [...blds.values()].filter((b) => b.footprint), roofs };
   }
@@ -949,7 +949,40 @@ body.noscroll{overflow:hidden}
     b.__bottom = set; return set;
   }
 
+  /* Solide swisstopo incohérent (p. ex. aile effondrée dans l'édition 2020) : le dessus du solide ne correspond pas à la couche Roof
+     du même bâtiment. On reconstruit alors un solide propre : toiture = couche Roof limitée à l'emprise, murs = emprise extrudée
+     du bas du modèle jusqu'à la toiture, dalle = emprise. */
+  function repairSolid(b, roofs) {
+    if (b.__repairChecked) return; b.__repairChecked = true;
+    const rf = []; (roofs || []).forEach((r) => { if ((b.props.UUID && r.uuid === b.props.UUID) || (b.props.EGID != null && r.egid === b.props.EGID)) rf.push(...r.faces); });
+    if (rf.length < 2 || !b.footprint || b.footprint.length < 3) return;
+    const H = (faces) => faces.map((t) => { const n = newell(t), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m < 0.05) return null; const xs = t.map((p) => p[0]), ys = t.map((p) => p[1]);
+      return { t, n, x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }; }).filter(Boolean);
+    const zTop = (hs, x, y) => { let z = -Infinity; for (const h of hs) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue; const p = h.t[0], zz = p[2] - (h.n[0] * (x - p[0]) + h.n[1] * (y - p[1])) / h.n[2]; if (zz > z) z = zz; } return z; };
+    const bot = bottomFaces(b), HS = H(b.faces.filter((t, i) => !bot.has(i))), HR = H(rf);
+    // faces « toiture » du solide (orientées vers le haut) situées nettement sous la couche Roof : solide incohérent
+    let n = 0, bad = 0;
+    HS.forEach((h) => { const A = norm(h.n) / 2, c = h.t.reduce((a, p) => [a[0] + p[0] / h.t.length, a[1] + p[1] / h.t.length, a[2] + p[2] / h.t.length], [0, 0, 0]);
+      if (c[2] < b.zbottom + 1 || !pointInRing(c[0], c[1], b.footprint)) return; const zr = zTop(HR, c[0], c[1]); if (!isFinite(zr)) return; n += A; if (zr - c[2] > 1.5) bad += A; });
+    if (n < 20 || bad / n < 0.1) return;
+    // reconstruction
+    const zb = b.zbottom, fp = b.footprint, faces = [], clip = [[[...fp.map((p) => [p[0], p[1]]), [fp[0][0], fp[0][1]]]]];
+    HR.forEach((h) => { let q; try { q = PC.intersection([[[...h.t.map((p) => [p[0], p[1]]), [h.t[0][0], h.t[0][1]]]]], clip); } catch (e) { return; }
+      const p0 = h.t[0], zf = (x, y) => p0[2] - (h.n[0] * (x - p0[0]) + h.n[1] * (y - p0[1])) / h.n[2];
+      q.forEach((pg) => { const r = pg[0].slice(0, -1); if (r.length >= 3) faces.push(r.map(([x, y]) => [x, y, zf(x, y)])); }); });
+    const hc = H(faces);
+    for (let i = 0; i < fp.length; i++) { const a = fp[i], c = fp[(i + 1) % fp.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]); if (L < 0.05) continue;
+      const ux = (c[0] - a[0]) / L, uy = (c[1] - a[1]) / L, k = Math.max(1, Math.ceil(L / 0.5)), top = [];
+      for (let j = 0; j <= k; j++) { const s2 = Math.min(L, Math.max(0, L * j / k)), x = a[0] + ux * s2, y = a[1] + uy * s2;
+        let z = -Infinity; for (const d of [0.05, 0.2, 0.5]) { for (const sg of [1, -1]) { const zz = zTop(hc, x - uy * d * sg, y + ux * d * sg); if (zz > z) z = zz; } if (isFinite(z)) break; }
+        top.push([x, y, isFinite(z) ? z : null]); }
+      let last = top.find((q) => q[2] != null); if (!last) continue; top.forEach((q) => { if (q[2] == null) q[2] = last[2]; else last = q; });
+      faces.push([[a[0], a[1], zb], [c[0], c[1], zb], ...top.slice().reverse().map((q) => [q[0], q[1], q[2]])].filter((q, j, arr) => j === 0 || Math.hypot(q[0] - arr[j - 1][0], q[1] - arr[j - 1][1], q[2] - arr[j - 1][2]) > 1e-3)); }
+    faces.push(fp.slice().reverse().map((p) => [p[0], p[1], zb]));
+    b.__origFaces = b.faces; b.faces = faces; b.walls = []; delete b.__bottom; b.rebuilt = { bad: Math.round(bad / n * 100) };
+  }
   async function analyse(b, roofs, terrainFn, log = () => {}, opts = {}) {
+    repairSolid(b, roofs);
     const edges = edgesOf(b.footprint);
     const isVert = (t) => { const n = newell(t), m = norm(n); return m > 0 && Math.abs(n[2]) / m < 0.05; };
     const solidV = b.faces.filter(isVert);
@@ -1198,7 +1231,19 @@ body.noscroll{overflow:hidden}
       lv.forEach((L) => { const z = L.zs / L.A; unionClosed(L.faces).forEach((poly) => { const r = poly[0], A = Math.abs(ringArea(r)) - poly.slice(1).reduce((s, h) => s + Math.abs(ringArea(h)), 0);
         if (A > 0.5) overhangs.push({ z, poly, area: A }); }); }); }
     const baseParts = (b.fpOther || []).map((poly) => ({ poly, area: Math.abs(ringArea(poly[0])) - poly.slice(1).reduce((s, h) => s + Math.abs(ringArea(h)), 0) }));
-    return { edges, roofWalls, pans, roofDebord, dz, zref, overhangs, baseParts, terrainSrc: terrainSrc + (groundLine ? ' — ligne de terre droite entre les angles' : ''), zCut: isFinite(zCut) ? zCut : null,
+    // toiture au nu extérieur des murs : certains solides (p. ex. édition 2020) contiennent les débords de toit (dessus + dessous en pente).
+    // Chaque face de toit est limitée, en plan, à l'emprise (+ porte-à-faux et parties accolées) ; surface vraie = surface en plan / cos(pente).
+    { const cl = (r) => { const q = r.map((p) => [p[0], p[1]]); if (q.length && (q[0][0] !== q[q.length - 1][0] || q[0][1] !== q[q.length - 1][1])) q.push([q[0][0], q[0][1]]); return q; };
+      let reg = [[cl(b.footprint)]]; try { [...overhangs.map((o) => o.poly), ...baseParts.map((x) => x.poly)].forEach((pg) => { reg = PC.union(reg, [pg.map(cl)]); }); } catch (err) {}
+      let regA = 0; try { regA = mpArea(reg); } catch (err) {}
+      if (regA > 1) pans.forEach((p) => { const nf = []; let A = 0, z0 = Infinity, z1 = -Infinity;
+        (p.faces || []).forEach((f) => { const n = newell(f), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) < 1e-9) return; const cosT = Math.abs(n[2]) / m, p0 = f[0];
+          let q; try { q = PC.intersection([[cl(f)]], reg); } catch (err) { q = [[cl(f)]]; }
+          q.forEach((pg) => { const a2 = mpArea([pg]); if (a2 < 1e-4) return; A += a2 / cosT;
+            const zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2], ring = pg[0].slice(0, -1).map(([x, y]) => [x, y, zf(x, y)]);
+            ring.forEach((v) => { z0 = Math.min(z0, v[2]); z1 = Math.max(z1, v[2]); }); if (ring.length >= 3) nf.push(ring); }); });
+        if (Math.abs(A - p.A) > 0.01) { p.Araw = p.A; p.A = A; p.faces = nf; if (nf.length) { p.zmin = z0; p.zmax = z1; } } }); }
+    return { rebuilt: b.rebuilt || null, edges, roofWalls, pans, roofDebord, dz, zref, overhangs, baseParts, terrainSrc: terrainSrc + (groundLine ? ' — ligne de terre droite entre les angles' : ''), zCut: isFinite(zCut) ? zCut : null,
       tRef, corners, cornersAuto, groundLine, zFloorAuto: Math.min(...edges.flatMap((e) => e.terrain.map((q) => q[1]))),
       baseRef: typeof opts.z00 === 'number' && isFinite(opts.z00) ? 'plan' : 'terrain', zRefB: typeof opts.z00 === 'number' && isFinite(opts.z00) ? opts.z00 : tRef,
       zFloor: typeof opts.zRadier === 'number' && isFinite(opts.zRadier) ? (typeof opts.z00 === 'number' && isFinite(opts.z00) ? opts.z00 : tRef) + opts.zRadier : Math.min(...edges.flatMap((e) => e.terrain.map((q) => q[1]))), tMin: Math.min(...allT), tMax: Math.max(...allT), tMean,
@@ -1223,6 +1268,7 @@ body.noscroll{overflow:hidden}
     const h = [], groups = groupsOf(res), rb = meta.regbl || {};
     const fen = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && counted(f, extra));
     const fenOut = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && !counted(f, extra));
+    if (res.rebuilt) h.push([`Modèle 3D swisstopo incohérent pour ce bâtiment (${res.rebuilt.bad} % des faces supérieures sous la toiture réelle) : volume reconstruit à partir de l'emprise et de la couche toiture (murs verticaux, lucarnes et décrochements de façade simplifiés).`, 'Contrôler hauteurs et surfaces de murs sur place ou sur plans', 'Élevé']);
     if (fenOut.length) h.push([`${fenOut.length} ouverture(s) du sous-sol non chauffé (${fmt(fenOut.reduce((s, f) => s + (f.nombre || 1) * f.l * f.h, 0))} m²) : hors enveloppe, non comptées.`, 'Confirmer que le sous-sol est hors enveloppe', 'Faible']);
     if (res.zCut != null) h.push([`Murs comptés au-dessus de la cote ${fmt(extra.zBase)} m ${res.baseRef === 'plan' ? 'du plan (±0.00 = ' + fmt(res.zRefB) + ' m, déduit du faîte)' : 'par rapport au terrain moyen swissALTI3D'} (base de l'enveloppe chauffée, ex. plancher du rez) : partie sous-sol exclue.`, 'Vérifier le niveau du plancher sur sous-sol (coupe)', 'Moyen']);
     const Afen = fen.reduce((s, f) => s + (f.nombre || 1) * f.l * f.h, 0);
@@ -1644,7 +1690,7 @@ body.noscroll{overflow:hidden}
         label: (name ? name + ' — ' : '') + (w.split ? `Mur ${w.orientation} sur la limite de séparation (mitoyen)` : w.roof ? `Mur dans la toiture ${w.orientation} (lanterneau / lucarne)`
           : w.low ? `Mur ${w.orientation} en retrait depuis le terrain (entrée, loggia, cour, étage décalé)` : `Mur ${w.orientation} en retrait / au-dessus d'une partie basse`) }); });
     });
-    res.pans.forEach((p, i) => {
+    res.pans.forEach((p, i) => { if (!(p.A >= 0.05)) return;               // pan entièrement hors emprise (débord de toit)
       const flat = p.az == null || p.tilt <= 3, key = `T|${i}`, def = combNC && !flat ? OUT : flat ? 'Toit plat / terrasse' : 'Toit en pente', o = flat ? 'Horiz' : sector(p.az);
       const lab0 = flat ? 'Toit plat' : `Pan de toit ${o} (${fmt(p.tilt, 0)}°)`, parts = roofSplit(res, extra, i);
       if (!parts) { P.push({ key, kind: 'toit', pan: i, orientation: o, area: p.A, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: lab0 }); return; }
@@ -4445,7 +4491,13 @@ function drawDecomp(g, DC, P, b, res, ink){
     const tilt = Math.acos(Math.min(1, n[2] / m)) * 180 / Math.PI, az = tilt >= 3 ? ((Math.atan2(n[0], n[1]) * 180 / Math.PI) + 360) % 360 : null;
     let bi = 0, bd = Infinity; res.pans.forEach((pp, i) => { const d = (pp.az == null || az == null ? (pp.az == null && az == null ? 0 : 90) : Math.abs(((pp.az - az + 540) % 360) - 180)) + Math.abs(pp.tilt - tilt); if(d < bd){ bd = d; bi = i; } });
     for(let k = 1; k < t.length - 1; k++) byPan[bi].push(P(t[0], res.dz), P(t[k], res.dz), P(t[k + 1], res.dz)); });
-  byPan.forEach((tris, i) => { const p = DC.byKey.get('T|' + i); if(p && tris.length) add(tris, p); });
+  byPan.forEach((tris, i) => { const p = DC.byKey.get('T|' + i); if(!p || !tris.length) return;
+    const pf = res.pans[i].faces; if(res.pans[i].Araw != null && pf){ const t2 = [];          // toiture limitée à l'emprise : dessinée depuis les faces découpées
+      pf.forEach((f) => { const n = [0, 0, 0]; for(let k = 0; k < f.length; k++){ const a = f[k], c = f[(k + 1) % f.length]; n[0] += (a[1] - c[1]) * (a[2] + c[2]); n[1] += (a[2] - c[2]) * (a[0] + c[0]); n[2] += (a[0] - c[0]) * (a[1] + c[1]); }
+        if(Math.abs(n[2]) < 1e-9) return; const p0 = f[0], zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2];
+        t2.push(...tri2([[[...f.map((q) => [q[0], q[1]]), [f[0][0], f[0][1]]]]], (x, y) => P([x, y, zf(x, y)], 0))); });
+      if(t2.length){ add(t2, p); return; } }
+    add(tris, p); });
   // pans découpés : parties redessinées sur le plan de chaque face
   DC.pieces.forEach((p) => { if(p.kind !== 'toit' || !p.rpolys) return; const tris = [];
     p.rpolys.forEach(({ mp, n, p0 }) => { const zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2]; tris.push(...tri2(mp, (x, y) => P([x, y, zf(x, y) + 0.01], 0))); });
