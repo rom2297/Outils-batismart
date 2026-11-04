@@ -1298,6 +1298,33 @@ body.noscroll{overflow:hidden}
   }
 
   // ---------------------------------------------------------------- Excel (ExcelJS)
+  // l'onglet Fenêtres du template a 50 lignes (5 à 54) + total en 55 : on ajoute des lignes au besoin
+  // et on recale les formules qui s'y réfèrent (total, sous-total filtré, filtre, mise en forme, Synthèse)
+  function growFenRows(wb, F, k) {
+    const last = 54, tot = 55, nl = last + k, nt = tot + k;
+    const tpl = F.getRow(last), cp = (o) => JSON.parse(JSON.stringify(o || {}));
+    F.spliceRows(tot, 0, ...Array.from({ length: k }, () => []));
+    for (let rr = last + 1; rr <= nl; rr++) {
+      const row = F.getRow(rr); if (tpl.height) row.height = tpl.height;
+      for (let c = 1; c <= 12; c++) { const s = tpl.getCell(c); row.getCell(c).style = cp(s.style); if (s.dataValidation) row.getCell(c).dataValidation = cp(s.dataValidation); }
+      row.getCell('A').value = `F-${String(rr - 4).padStart(2, '0')}`;
+      row.getCell('G').value = { formula: `IF(AND(E${rr}>0,F${rr}>0),E${rr}*F${rr},"")` };
+      row.getCell('H').value = { formula: `IF(AND(D${rr}>0,G${rr}<>""),D${rr}*G${rr},"")` };
+      row.getCell('I').value = { formula: `IF(AND(E${rr}>0,F${rr}>0),2*(E${rr}+F${rr}),"")` };
+      row.getCell('J').value = { formula: `IF(AND(D${rr}>0,I${rr}<>""),D${rr}*I${rr},"")` };
+    }
+    F.getCell(`H${nt}`).value = { formula: `SUM(H5:H${nl})` };
+    F.getCell(`J${nt}`).value = { formula: `SUM(J5:J${nl})` };
+    F.getCell('H3').value = { formula: `SUBTOTAL(109,H5:H${nl})` };
+    if (F.autoFilter) F.autoFilter = `A4:L${nl}`;
+    (F.conditionalFormattings || []).forEach((cf) => { cf.ref = String(cf.ref).replace(/([A-L])54$/, `$1${nl}`); });
+    const re = /('?Fenêtres'?!)(\$?[A-L]\$?)(\d+)(?::(\$?[A-L]\$?)(\d+))?/g;
+    const mv = (n) => (+n === last ? nl : +n === tot ? nt : +n);
+    const fix = (s) => s.replace(re, (m, sh, c1, r1, c2, r2) => `${sh}${c1}${mv(r1)}` + (c2 ? `:${c2}${mv(r2)}` : ''));
+    wb.eachSheet((w) => { if (w === F) return; w.eachRow((row) => row.eachCell((c) => {
+      const f = c.formula; if (f && /Fenêtres'?!/.test(f)) { const g = fix(f); if (g !== f) c.value = { formula: g }; }
+    })); });
+  }
   function fillWorkbook(wb, meta, res, b, neighbours, today, extra, dc) {
     extra = extra || {};
     const ws = (n) => { const w = wb.getWorksheet(n); if (!w) throw new Error(`Onglet « ${n} » introuvable dans le template`); return w; };
@@ -1334,7 +1361,9 @@ body.noscroll{overflow:hidden}
       T.getCell(`E${r}`).value = r2(x.gross); T.getCell(`K${r}`).value = noteOf(x) + ` Périmètre 3D ${fmt(res.perimeter)} m.`; r++;
     });
     const F = ws('Fenêtres'); r = 5;
-    dc.wins.filter((w) => !w.out && w.f.l > 0 && w.f.h > 0).slice(0, 50).forEach((w) => { const f = w.f;
+    const winList = dc.wins.filter((w) => !w.out && w.f.l > 0 && w.f.h > 0);
+    if (winList.length > 50) growFenRows(wb, F, winList.length - 50);
+    winList.forEach((w) => { const f = w.f;
       F.getCell(`B${r}`).value = f.niveau || null; F.getCell(`C${r}`).value = f.facade || null; F.getCell(`D${r}`).value = f.nombre || 1;
       F.getCell(`E${r}`).value = r2(f.l); F.getCell(`F${r}`).value = r2(f.h);
       F.getCell(`L${r}`).value = [f.type === 'Porte' ? 'Porte' : null, w.parent ? `élément parent ${w.parent}` : null, f.note || null].filter(Boolean).join(' — ') || null; r++;
