@@ -970,13 +970,28 @@ body.noscroll{overflow:hidden}
     faces.push(fp.slice().reverse().map((p) => [p[0], p[1], zb]));
     return faces;
   }
+  /* Retrait (encoche) de l'emprise entre deux angles a et c : polygone formé par le côté de l'emprise qui sort du segment a–c.
+     Rend la liste des sommets du retrait (fermé par a–c), ou null. */
+  function pocketBetween(fp, a, c) {
+    if (!fp || fp.length < 4) return null;
+    const idx = (p) => { let bi = -1, bd = 0.6; fp.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; bi = i; } }); return bi; };
+    const i = idx(a), j = idx(c); if (i < 0 || j < 0 || i === j) return null;
+    const chain = (s, e) => { const r = []; for (let k = s; ; k = (k + 1) % fp.length) { r.push([fp[k][0], fp[k][1]]); if (k === e) break; } return r; };
+    const cl = (r) => [...r, r[0]], F = [cl(fp.map((p) => [p[0], p[1]]))];
+    let best = null;
+    [chain(i, j), chain(j, i)].forEach((P) => { if (P.length < 3) return; const A = Math.abs(ringArea(P)); if (A < 0.3) return;
+      let I = 0; try { I = PC.intersection([cl(P)], F).reduce((s, pg) => s + Math.abs(ringArea(openRing(pg[0]))) - pg.slice(1).reduce((t, h) => t + Math.abs(ringArea(openRing(h))), 0), 0); } catch (e) { return; }
+      const out = A - I; if (out < 0.3) return; const sc = I / A; if (!best || sc < best.sc) best = { P, sc }; });
+    return best && best.sc < 0.5 ? best.P : null;
+  }
   /* Emprise agrandie (partie manquante du modèle 3D, retraits / trous de l'emprise) : nouvelle emprise = emprise ∪ poly, trous bouchés.
      Toiture de la zone ajoutée = prolongement des pans voisins (enveloppe basse de leurs plans, comme un toit à pans qui se rejoignent).
      Murs reconstruits verticaux le long de la nouvelle emprise. Rend un nouveau bâtiment ou null. */
   function extendBuilding(b0, poly, roofs) {
-    if (!b0.footprint || !poly || poly.length < 3) return null;
+    const polys = poly && poly.length && Array.isArray(poly[0][0]) ? poly : [poly];
+    if (!b0.footprint || !polys.every((q) => q && q.length >= 3)) return null;
     const cl = (r) => [...r.map((p) => [p[0], p[1]]), [r[0][0], r[0][1]]];
-    let U; try { U = PC.union([cl(b0.footprint)], [cl(poly)]); } catch (e) { return null; }
+    let U; try { U = PC.union([cl(b0.footprint)], ...polys.map((q) => [cl(q)])); } catch (e) { return null; }
     if (!U.length) return null;
     const big = U.map((pg) => openRing(pg[0])).sort((a, c) => Math.abs(ringArea(c)) - Math.abs(ringArea(a)))[0];   // contour extérieur seul : trous bouchés
     let fp = big; if (ringArea(fp) < 0) fp = fp.slice().reverse();
@@ -1032,7 +1047,7 @@ body.noscroll{overflow:hidden}
     });
     const roofF = [...rf0, ...out];
     const faces = prismFromRoof(roofF, fp, b0.zbottom);
-    const kept = Object.assign({}, b0, { faces, walls: [], __root: b0.__root || b0, extendPoly: poly.map((p) => [p[0], p[1]]), extended: { add: addA }, __repairChecked: true });
+    const kept = Object.assign({}, b0, { faces, walls: [], __root: b0.__root || b0, extendPoly: polys, extended: { add: addA }, __repairChecked: true });
     delete kept.__bottom; delete kept.fpOther; delete kept.rebuilt; computeFootprint(kept);
     return kept.footprint ? kept : null;
   }
@@ -1816,7 +1831,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { extendBuilding, prismFromRoof, roofPanOf, roofLinks, segHitsPan, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { pocketBetween, extendBuilding, prismFromRoof, roofPanOf, roofLinks, segHitsPan, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -2415,7 +2430,8 @@ async function analyseBuilding(b, why, manual){
   if(sp && sp.uuid === b.props.UUID && sp.poly && sp.poly.length >= 3){ const r = C.splitBuildingPoly(b, sp.poly, sp.keep); if(r) b = r.kept; }
   else if(sp && sp.uuid === b.props.UUID && sp.lines && sp.lines.length){ const r = C.splitBuilding(b, sp.lines, sp.keep); if(r) b = r.kept; }
   const xt = S.extra.extend;
-  if(xt && xt.uuid === b.props.UUID && xt.poly && xt.poly.length >= 3){ const r = C.extendBuilding(b, xt.poly, S.roofs); if(r) b = r; }
+  const xps = xt && xt.uuid === b.props.UUID ? (xt.polys || (xt.poly ? [xt.poly] : [])) : [];
+  if(xps.length){ const r = C.extendBuilding(b, xps, S.roofs); if(r) b = r; }
   b = window.applyCorr ? window.applyCorr(b) : b;
   S.b=b; step('terrain','run'); status('Terrain par façade…');
   const useT = $('opt-terrain').checked;
@@ -2507,7 +2523,7 @@ function render(){
     <div><span>Ath / SRE</span><strong>${sre?fmt(Ath/sre):'—'}</strong></div></div>`;
   const rbA = rb && +rb.surface_sol, big = !b.splitPoly && !(b.splitLines||[]).length && ((rbA > 0 && b.fpArea > 1.8 * rbA) || (!rbA && b.fpArea > 600));
   h += `<div class="split"><div>${big ? `<div class="note" style="border-left:3px solid var(--crit-e,#c0392b);padding:4px 8px;margin-bottom:6px"><b>Volume 3D trop grand</b> : ${fmt(b.fpArea,0)} m² au sol${rbA > 0 ? ` pour ${fmt(rbA,0)} m² au RegBL` : ''}. Le modèle regroupe sans doute tout l'îlot (fréquent sur les anciennes tuiles, p. ex. Vaud) : utilisez <b>Tracer l'emprise du bâtiment</b> sur le fond cadastral.</div>` : ''}${planSVG(false)}<p class="note">Cliquez sur un bâtiment gris pour l'analyser à la place. Croix = point de l'adresse.</p>
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="emp-go" aria-pressed="${S.empMode?'true':'false'}" title="Le volume 3D couvre tout un îlot : tracez le contour du bâtiment sur le plan cadastral (clics sur les angles, accrochage aux angles du modèle 3D), on garde l'intérieur">▭ Tracer l'emprise du bâtiment</button><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Couper par une ligne</button><button type="button" class="ghost sm" id="emp-add" aria-pressed="${S.empMode&&S.empAdd?'true':'false'}" title="Le modèle 3D a des trous ou une partie manquante par rapport à la photo aérienne : tracez la zone à ajouter (accrochage aux angles), la toiture prolonge les pans voisins">＋ Combler / agrandir</button>${S.extra.extend?`<button type="button" class="ghost sm" id="emp-add-undo">Annuler l'ajout</button>`:''}${(b.splitLines||[]).length||b.splitPoly?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<label class="note" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cad-on"${S.cadastre?' checked':''}> Fond cadastre</label><span class="note" id="sp-msg" style="flex-basis:100%"></span></div></div><div class="col">`;
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="emp-go" aria-pressed="${S.empMode?'true':'false'}" title="Le volume 3D couvre tout un îlot : tracez le contour du bâtiment sur le plan cadastral (clics sur les angles, accrochage aux angles du modèle 3D), on garde l'intérieur">▭ Tracer l'emprise du bâtiment</button><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Couper par une ligne</button><button type="button" class="ghost sm" id="emp-add" aria-pressed="${S.empMode&&S.empAdd?'true':'false'}" title="Fermer un retrait : 2 clics sur les angles de part et d&#39;autre + Entrée. Ajouter une partie manquante : tracez la zone. La toiture prolonge les pans voisins.">＋ Combler / agrandir</button>${S.extra.extend?`<button type="button" class="ghost sm" id="emp-add-undo">Annuler l'ajout</button>`:''}${(b.splitLines||[]).length||b.splitPoly?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<label class="note" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cad-on"${S.cadastre?' checked':''}> Fond cadastre</label><span class="note" id="sp-msg" style="flex-basis:100%"></span></div></div><div class="col">`;
   h += `<div><h2>Éléments CECB</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Élément</th><th class="n">Net m²</th></tr></thead><tbody>` +
     L.map(x=>`<tr><td class="mono" style="white-space:nowrap">${x.code}</td><td>${esc(x.name.replace(' (3D)',''))}<div class="note">${esc(x.type)}</div></td><td class="n">${fmt(x.net)}</td></tr>`).join('') +
     `</tbody></table></div><p class="note">Ce sont les lignes exportées. Pour changer le type d'un mur ou d'un pan : onglet <b>4 Enveloppe 3D</b>. Fenêtres non saisies : onglet <b>3</b>.</p></div>`;
@@ -5524,16 +5540,18 @@ window.wireSplit = function(R){
     return { p: bq ? bq : p, snapped: !!bq }; };
   const redraw = (extra) => { const all = extra ? [...ep, extra] : ep; pl.setAttribute('points', all.map((q) => `${(q[0] - x0).toFixed(2)},${(y1 - q[1]).toFixed(2)}`).join(' ')); };
   const finish = () => {
+    if(S.empAdd && ep.length === 2){   // 2 angles : on ferme le retrait entre eux
+      const pk = C.pocketBetween(S.b.footprint, ep[0], ep[1]);
+      if(!pk){ msg.textContent = 'Cliquez 2 angles du bâtiment de part et d\'autre du retrait à fermer.'; S.empPts = []; redraw(); return; }
+      ep.length = 0; pk.forEach((q) => ep.push(q));
+    }
     if(ep.length < 3){ msg.textContent = 'Il faut au moins 3 angles.'; return; }
     if(S.empAdd){
-      const prev = S.extra.extend && S.extra.extend.uuid === root.props.UUID ? S.extra.extend.poly : null;
-      // ajouts successifs : on cumule les zones (union faite dans le noyau)
-      let poly = ep.map((q) => [q[0], q[1]]);
-      if(prev){ const cl = (r) => [...r, r[0]]; try { const U = polygonClipping.union([cl(prev)], [cl(poly)]); if(U.length === 1) poly = U[0][0].slice(0, -1); else poly = null; } catch(e){ poly = null; }
-        if(!poly){ msg.textContent = 'La nouvelle zone doit toucher la zone déjà ajoutée (ou annulez l\'ajout et retracez).'; S.empPts = []; redraw(); return; } }
+      const xe = S.extra.extend && S.extra.extend.uuid === root.props.UUID ? S.extra.extend : null, prev = xe ? (xe.polys || (xe.poly ? [xe.poly] : [])) : [];
+      const poly = ep.map((q) => [q[0], q[1]]);
       const test = C.extendBuilding(S.b, poly, S.roofs);
       if(!test){ msg.textContent = 'Zone ajoutée vide : tracez une zone qui sort de l\'emprise actuelle.'; S.empPts = []; redraw(); return; }
-      S.extra.extend = { uuid: root.props.UUID, poly }; S.empMode = false; S.empAdd = false; S.empPts = []; S.extra.adj = {}; S.extra.names = {}; T3 && (T3.sel = []);
+      S.extra.extend = { uuid: root.props.UUID, polys: [...prev, poly] }; S.empMode = false; S.empAdd = false; S.empPts = []; S.extra.adj = {}; S.extra.names = {}; T3 && (T3.sel = []);
       status(`Emprise complétée : +${fmt(test.extended.add)} m² au sol. Recalcul…`);
       analyseBuilding(root, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true)); return;
     }
@@ -5544,7 +5562,7 @@ window.wireSplit = function(R){
     status(`Emprise tracée : volume ${fmt(root.fpArea)} → ${fmt(test.kept.fpArea)} m² au sol, ${test.kept.splitLines.length} mur(s) mitoyen(s) créé(s). Recalcul…`);
     analyseBuilding(root, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true));
   };
-  if(S.empAdd) msg.innerHTML = 'Cliquez les angles de la zone à <b>ajouter</b> (trou, retrait, partie manquante) en débordant un peu sur le bâtiment ; accrochage aux angles. Recliquez le 1er point ou <b>Entrée</b> pour fermer · <b>Retour arrière</b> · <b>Échap</b>.'; else
+  if(S.empAdd) msg.innerHTML = '<b>Fermer un retrait</b> : cliquez les 2 angles de part et d\'autre, puis <b>Entrée</b>. <b>Ajouter une zone</b> : cliquez ses angles (en débordant un peu sur le bâtiment), recliquez le 1er point ou Entrée. Accrochage aux angles · <b>Retour arrière</b> · <b>Échap</b>.'; else
   msg.innerHTML = 'Cliquez les angles du bâtiment sur le plan (accrochage aux angles du modèle 3D, cercle plein). Recliquez le 1er point ou <b>Entrée</b> pour fermer · <b>Retour arrière</b> : annuler le dernier point · <b>Échap</b> : abandonner.';
   svg.addEventListener('mousemove', (ev) => { const r = snap(toEN(ev)); cur.setAttribute('cx', r.p[0] - x0); cur.setAttribute('cy', y1 - r.p[1]); cur.setAttribute('fill', r.snapped || r.close ? '#a855f7' : 'none'); redraw(r.p); });
   svg.addEventListener('click', (ev) => { if(!S.empMode) return; ev.stopPropagation(); ev.preventDefault(); const r = snap(toEN(ev));
