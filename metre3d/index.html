@@ -40,7 +40,7 @@
 [hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);padding-inline:16px;padding-block:0 40px}
-.wrap{max-width:1200px;margin:0 auto}
+.wrap{max-width:1640px;margin:0 auto}
 header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 18px;padding-block:22px 16px;border-bottom:1px solid var(--line);margin-bottom:18px}
 h1{font:700 26px/1.1 var(--display);letter-spacing:-.01em;margin:0}
 header p{margin:0;color:var(--muted)}
@@ -166,7 +166,7 @@ input[type=number]{width:90px;font-family:var(--mono);font-size:13px}
 .x{background:transparent;border:none;color:var(--muted);padding:2px 6px;font-size:16px;line-height:1}
 .x:hover{color:var(--crit-b)}
 /* 3D */
-.v3d{position:relative;height:min(68vh,680px);min-height:360px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
+.v3d{position:relative;height:max(480px,calc(100vh - 150px));min-height:360px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--bg)}
 .v3d canvas{display:block}
 .d3edit{position:absolute;right:10px;top:10px;width:min(320px,calc(100% - 20px));background:color-mix(in srgb,var(--surface) 94%,transparent);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:4px}
 .d3tip{position:absolute;left:10px;bottom:10px;max-width:calc(100% - 20px);min-width:200px;background:var(--accent-soft);color:var(--accent);border:1px solid var(--accent);border-radius:var(--radius);padding:6px 10px;font-size:12.5px;pointer-events:none}
@@ -199,6 +199,8 @@ table.edit input,table.edit select{width:100%;padding:5px 6px}
 table.edit input[type=number]{width:78px}
 
 /* plein écran du dessin sur plan */
+#t-3d.maxi{position:fixed;inset:0;z-index:1000;background:var(--surface);padding:8px 12px;overflow:auto}
+#t-3d.maxi .v3d{height:calc(100vh - 145px)}#t-3d.maxi #d3-legend{max-height:calc(100vh - 145px)}
 #t-plans:fullscreen,#t-plans.maxi{display:flex;flex-direction:column;gap:8px;background:var(--surface);padding:10px 12px;box-sizing:border-box;width:100%;height:100%}
 #t-plans.maxi{position:fixed;inset:0;z-index:1000;padding-top:calc(10px + env(safe-area-inset-top,0px));padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}
 #t-plans:fullscreen .toolbar,#t-plans.maxi .toolbar{margin-bottom:0}
@@ -328,6 +330,7 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
         <label class="note" style="display:inline-flex;gap:4px;align-items:center" title="En posant une coupe verticale : la poser aussi sur la façade d'en face, au même alignement, et couper la toiture et les planchers entre les deux"><input type="checkbox" id="d3-vpair" checked> en face + toiture</label>
         <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
+        <button type="button" class="ghost sm" id="d3-max" title="Agrandir la vue 3D à toute la fenêtre (Échap pour revenir)">⛶ Plein écran</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
       </div>
@@ -5162,6 +5165,10 @@ function wDragEnd(){ const d = T3 && T3.wdrag; if(!d) return false; T3.wdrag = n
     else { d.f.pos = Object.assign({}, d.f.pos, d.r.pos); delete d.f.pos.zA; delete d.f.pos.zB; delete d.f.fs; delete d.f.fsInfo; } }
   hint3(''); renderWinPanel(); wChanged(); return true; }
 $('d3-wmode').onclick = () => setWinMode(!(T3 && T3.winMode));
+// vue 3D en plein écran (plein fenêtre)
+function set3DMax(on){ const sec = $('t-3d'); sec.classList.toggle('maxi', on); document.body.classList.toggle('noscroll', on); $('d3-max').textContent = on ? '✕ Réduire' : '⛶ Plein écran'; setTimeout(() => { resize3D(); if(T3) T3.render(); }, 30); }
+$('d3-max').onclick = () => set3DMax(!$('t-3d').classList.contains('maxi'));
+document.addEventListener('keydown', (e) => { if(e.key !== 'Escape' || !$('t-3d').classList.contains('maxi')) return; if(T3 && (T3.cutMode || T3.winMode || T3.cutSel || T3.wsel || T3.drag)) return; set3DMax(false); });
 
 // ============================================================ noms des parties : liste déroulante
 /* Liste des noms du bâtiment (S.extra.palette) + noms déjà utilisés. Choisir un nom regroupe les parties :
