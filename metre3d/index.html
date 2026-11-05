@@ -4101,6 +4101,14 @@ function build3D(){
       wm.userData.win = f.uid; g.add(wm); T3.winPick.push(wm);
       wm.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v))), new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
       nWin += f.nombre || 1; return; }
+    if(f.posw && res.roofWalls && res.roofWalls[f.posw.k]){          // fenêtre posée sur un mur en retrait : rectangle dans le plan du mur
+      const q = f.posw, rd = [q.ny, -q.nx], c = (u, v) => P([q.E + rd[0] * u + q.nx * 0.04, q.N + rd[1] * u + q.ny * 0.04, q.Z + v], 0);
+      const A = c(-f.l / 2, -f.h / 2), B = c(f.l / 2, -f.h / 2), C2 = c(f.l / 2, f.h / 2), D = c(-f.l / 2, f.h / 2);
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3));
+      const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      wm.userData.win = f.uid; g.add(wm); T3.winPick.push(wm);
+      wm.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v))), new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
+      nWin += f.nombre || 1; return; }
     if(/^Pan /.test(f.facade || '') && f.pos){                       // fenêtre de toit : projetée sur le pan
       const fac = f.facade.slice(4), loc = locateOn(fac, f.pos.s), pan = panFor(fac);
       if(!loc || !pan){ nOff++; return; }
@@ -4504,6 +4512,8 @@ function cecbData(){                          // morceaux, lignes CECB, rattache
     let pc = null; const fac = (f.facade || '').replace(/^Pan /, '');
     if(f.pos3 && res.pans[f.pos3.pi]){ const pi = f.pos3.pi, cand = pieces.filter((q) => q.kind === 'toit' && q.pan === pi);       // velux posé dans la 3D
       pc = cand.find((q) => q.rpolys && q.rpolys.some(({ mp }) => mp.some((pg) => inRing2(pg[0], f.pos3.E, f.pos3.N)))) || byKey.get('T|' + pi) || cand.sort((a, c) => c.area - a.area)[0] || null; }
+    else if(f.posw){ const cand = pieces.filter((q) => q.kind === 'mur' && (q.key === 'L|' + f.posw.k || q.key.startsWith('L|' + f.posw.k + '|')));
+      pc = cand.find((q) => { let z0 = Infinity, z1 = -Infinity; (q.plane && q.plane.poly || []).forEach((pg) => pg[0].forEach(([, z]) => { z0 = Math.min(z0, z); z1 = Math.max(z1, z); })); return f.posw.Z >= z0 && f.posw.Z <= z1; }) || cand.sort((a, c) => c.area - a.area)[0] || null; }
     else
     if(/^Pan /.test(f.facade || '')){ const pan = panFor(fac); if(pan){ const pi = res.pans.indexOf(pan); pc = byKey.get('T|' + pi) || pieces.filter((q) => q.kind === 'toit' && q.pan === pi).sort((a, c) => c.area - a.area)[0] || null; } }
     else if(f.pos && fac){ const loc = locateOn(fac, f.pos.s); if(loc){ const ei = res.edges.indexOf(loc.e), zc = zAbs(fac, f.pos) + (f.h || 0) / 2;
@@ -5298,6 +5308,9 @@ function wPosAt(fac, E, N, zb, w, exceptUid){
   t = Math.max(F.t0 + w / 2, Math.min(F.t1 - w / 2, t));
   return { pos: { s: +((t - F.t0) / F.W).toFixed(4), dR: +(ridge3D() - zb).toFixed(3) }, snapT, snapZ };
 }
+// étendue verticale (altitude) d'un mur en retrait k
+function rwRange(k){ const w = S.res.roofWalls[k]; let z0 = Infinity, z1 = -Infinity; const f = w && (w.face || []); f.forEach((q) => { z0 = Math.min(z0, q[2]); z1 = Math.max(z1, q[2]); });
+  if(!isFinite(z0) && w && w.poly) w.poly.forEach((pg) => pg[0].forEach(([, z]) => { z0 = Math.min(z0, z); z1 = Math.max(z1, z); })); return { z0, z1 }; }
 function wPlace(hit, p){
   const t = WT().find((x) => x.id === T3.wType); if(!t) return;
   const o = T3.o, E = hit.point.x + o[0], N = o[1] - hit.point.z, Z = hit.point.y + o[2];
@@ -5305,6 +5318,11 @@ function wPlace(hit, p){
     if(p.kind !== 'toit'){ hint3('Velux : cliquez sur un pan de toit.'); return; } const pan = S.res.pans[p.pan];
     const f = { uid: uid(), gen: '3d', typeId: t.id, type: 'Fenêtre', velux: true, niveau: 'Combles', facade: pan.az != null ? 'Pan ' + C.sector(pan.az) : 'Toit plat', nombre: 1, l: t.l, h: t.h, pos3: { E: +E.toFixed(3), N: +N.toFixed(3), Z: +Z.toFixed(3), pi: p.pan }, note: `posé en 3D ${t.id}` };
     S.extra.fenetres.push(f); T3.wsel = f.uid; renderWinPanel(); wChanged(); hint3(`${t.id} posé sur le ${f.facade.toLowerCase()} (${fmt(t.l)} × ${fmt(t.h)} m, rampant).`); return; }
+  if(p.kind === 'mur' && /^L\|/.test(p.key)){                     // mur en retrait / dans la toiture (au-dessus d'une terrasse, lucarne) : position 3D sur le plan du mur
+    const k = +p.key.split('|')[1], w = S.res.roofWalls[k]; if(!w) return;
+    const a = w.az * Math.PI / 180, nx = Math.sin(a), ny = Math.cos(a), rw = rwRange(k, nx, ny), zc = Math.max(rw.z0 + t.h / 2, Math.min(rw.z1 - t.h / 2, Z));
+    const f = { uid: uid(), gen: '3d', typeId: t.id, type: wType(t.kind), niveau: '', facade: w.orientation, nombre: 1, l: t.l, h: t.h, posw: { E: +E.toFixed(3), N: +N.toFixed(3), Z: +zc.toFixed(3), k, nx: +nx.toFixed(5), ny: +ny.toFixed(5) }, note: `posée en 3D ${t.id} (mur en retrait)` };
+    S.extra.fenetres.push(f); T3.wsel = f.uid; renderWinPanel(); wChanged(); hint3(`${t.id} posée sur le mur en retrait ${w.orientation}.`); return; }
   if(p.kind !== 'mur' || !(p.edge >= 0)){ hint3(t.kind === 'Porte' ? 'Porte : cliquez sur une façade.' : 'Cliquez sur une façade (velux : choisissez un type Velux).'); return; }
   const e = S.res.edges[p.edge]; let zb = Z - t.h / 2, onZero = false;
   if(t.kind === 'Porte'){ const z0 = S.res.zRefB != null ? S.res.zRefB : S.res.tRef; if(Math.abs(zb - z0) < 1.2){ zb = z0; onZero = true; } }   // porte : seuil au ±0.00
@@ -5317,7 +5335,8 @@ function wPlace(hit, p){
 function wDragStart(ev){
   if(!T3 || !T3.winMode || ev.button !== 0 || !T3.winPick || !T3.winPick.length) return false;
   const hit = ray3(ev).intersectObjects(T3.winPick, false)[0]; if(!hit) return false;
-  const f = (S.extra.fenetres || []).find((x) => x.uid === hit.object.userData.win); if(!f || (!f.pos && !f.pos3)) return false;
+  const f = (S.extra.fenetres || []).find((x) => x.uid === hit.object.userData.win); if(!f || (!f.pos && !f.pos3 && !f.posw)) return false;
+  if(f.posw){ T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane: new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(f.posw.nx, 0, -f.posw.ny), hit.point), dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, w: true }; T3.ctl.enabled = false; T3.wsel = f.uid; return true; }
   if(f.pos3){ T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -hit.point.y), dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, v: true }; T3.ctl.enabled = false; T3.wsel = f.uid; return true; }
   const e = hit.object.userData.e, plane = new THREE.Plane().setFromNormalAndCoplanarPoint(new THREE.Vector3(e.n[0], 0, -e.n[1]), hit.point);
   T3.wdrag = { f, obj: hit.object, p0: hit.point.clone(), plane, dup: ev.ctrlKey || ev.metaKey || ev.altKey, moved: false, z0: zAbs(f.facade, f.pos), c0: null };
@@ -5325,6 +5344,9 @@ function wDragStart(ev){
   T3.ctl.enabled = false; T3.wsel = f.uid; return true;
 }
 function wDragMove(ev){ const d = T3 && T3.wdrag; if(!d) return false; const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return true;
+  if(d.w){ const q0 = d.f.posw, rd = [q0.ny, -q0.nx], dE = q.x - d.p0.x, dN = -(q.z - d.p0.z), du = dE * rd[0] + dN * rd[1], rg = rwRange(q0.k), z = Math.max(rg.z0 + d.f.h / 2, Math.min(rg.z1 - d.f.h / 2, q0.Z + (q.y - d.p0.y)));
+    d.rw = Object.assign({}, q0, { E: +(q0.E + rd[0] * du).toFixed(3), N: +(q0.N + rd[1] * du).toFixed(3), Z: +z.toFixed(3) }); d.moved = true;
+    d.obj.position.set(d.rw.E - q0.E, d.rw.Z - q0.Z, -(d.rw.N - q0.N)); T3.render(); hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} — relâchez pour poser`); return true; }
   if(d.v){ const p3 = d.f.pos3, E = p3.E + (q.x - d.p0.x), N = p3.N - (q.z - d.p0.z), z = faceZ(p3.pi, E, N); if(z == null) return true;
     d.r3 = { E: +E.toFixed(3), N: +N.toFixed(3), Z: +z.toFixed(3), pi: p3.pi }; d.moved = true; d.obj.position.set(E - p3.E, z - p3.Z, -(N - p3.N)); T3.render(); hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} — relâchez pour poser`); return true; }
   const F = facFrame(d.f.facade), dE = q.x - d.p0.x, dN = -(q.z - d.p0.z), dZ = q.y - d.p0.y;
@@ -5334,7 +5356,8 @@ function wDragMove(ev){ const d = T3 && T3.wdrag; if(!d) return false; const q =
   d.obj.position.set(F.r[0] * ds, dz, -F.r[1] * ds); T3.render();
   hint3(`${d.dup ? 'Copie' : 'Déplacement'} ${d.f.typeId || ''} : ${r.snapZ ? 'allège alignée' : ''}${r.snapZ && r.snapT ? ', ' : ''}${r.snapT ? 'axe aligné' : ''}${!r.snapZ && !r.snapT ? 'relâchez pour poser' : ''}`); return true; }
 function wDragEnd(){ const d = T3 && T3.wdrag; if(!d) return false; T3.wdrag = null; T3.ctl.enabled = true;
-  if(d.moved && d.r3){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos3: d.r3 }); S.extra.fenetres.push(c); T3.wsel = c.uid; } else d.f.pos3 = d.r3; }
+  if(d.moved && d.rw){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), posw: d.rw }); S.extra.fenetres.push(c); T3.wsel = c.uid; } else d.f.posw = d.rw; }
+  else if(d.moved && d.r3){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos3: d.r3 }); S.extra.fenetres.push(c); T3.wsel = c.uid; } else d.f.pos3 = d.r3; }
   else if(d.moved && d.r){ if(d.dup){ const c = Object.assign({}, d.f, { uid: uid(), pos: d.r.pos }); delete c.fs; delete c.fsInfo; S.extra.fenetres.push(c); T3.wsel = c.uid; }
     else { d.f.pos = Object.assign({}, d.f.pos, d.r.pos); delete d.f.pos.zA; delete d.f.pos.zB; delete d.f.fs; delete d.f.fsInfo; } }
   hint3(''); renderWinPanel(); wChanged(); return true; }
