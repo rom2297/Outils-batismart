@@ -1024,7 +1024,45 @@ body.noscroll{overflow:hidden}
       return [[[px + tx * W, py + ty * W], [px - tx * W, py - ty * W], [px - tx * W - nx * W, py - ty * W - ny * W], [px + tx * W - nx * W, py + ty * W - ny * W], [px + tx * W, py + ty * W]]]; };   // {A x + B y + C ≤ 0}
     const cutBy = (reg, h) => { if (h === null || !reg.length) return reg; if (!h.length) return []; try { return PC.intersection(reg, h); } catch (e) { return reg; } };
     const out = [];
+    // toiture lissée : surface continue tendue entre la toiture existante (bord commun) et l'égout des nouveaux côtés
+    const fo = b0.footprint, onOld = (x, y) => fo.some((a, i) => dSeg(x, y, a, fo[(i + 1) % fo.length]) < 0.05);
+    const zOld = (x, y) => { let best = -Infinity; for (let i = 0; i < fo.length; i++) { const a = fo[i], c = fo[(i + 1) % fo.length]; if (dSeg(x, y, a, c) > 0.05) continue; const L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+        for (const d of [0.15, 0.4, 0.8]) { let z = -Infinity; for (const sg of [1, -1]) { const zz = zR(x - (c[1] - a[1]) / L * d * sg, y + (c[0] - a[0]) / L * d * sg); if (zz > z) z = zz; } if (isFinite(z)) { best = Math.max(best, z); break; } } } return best; };
+    const tinFill = (R0) => {
+      let R = R0.slice(); if (ringArea(R) < 0) R.reverse();
+      const pts = []; R.forEach((a, i) => { const c = R[(i + 1) % R.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]), k = Math.max(1, Math.ceil(L / 0.5));
+        for (let j = 0; j < k; j++) pts.push({ x: a[0] + (c[0] - a[0]) * j / k, y: a[1] + (c[1] - a[1]) * j / k, keep: j === 0 }); });
+      pts.forEach((p) => { p.old = onOld(p.x, p.y); p.z = p.old ? zOld(p.x, p.y) : null; if (p.old && !isFinite(p.z)) { p.old = false; p.z = null; } });
+      const n = pts.length; if (!pts.some((p) => p.old)) return null;
+      // nouveaux côtés : égout interpolé (longueur développée) entre les points de la toiture existante qui les encadrent
+      const M = (k) => ((k % n) + n) % n, zLo = Math.min(...pts.filter((p) => p.old).map((p) => p.z));
+      const z0 = pts.map((p) => p.z);
+      for (let i = 0; i < n; i++) { if (pts[i].old) continue; let a = i, c = i; while (!pts[M(a)].old) a--; while (!pts[M(c)].old) c++;
+        let dA = 0, dC = 0; for (let k = a; k < i; k++) dA += Math.hypot(pts[M(k + 1)].x - pts[M(k)].x, pts[M(k + 1)].y - pts[M(k)].y);
+        for (let k = i; k < c; k++) dC += Math.hypot(pts[M(k + 1)].x - pts[M(k)].x, pts[M(k + 1)].y - pts[M(k)].y);
+        const zA = Math.min(z0[M(a)], zLo + 1), zC = Math.min(z0[M(c)], zLo + 1);   // l'égout ne monte pas au faîte d'un pignon voisin
+        pts[i].z = zA + (zC - zA) * dA / ((dA + dC) || 1); }
+      // simplification : on retire les points intermédiaires alignés (plan et altitude)
+      let P = pts.slice();
+      for (let it = 0, ch = true; ch && it < 400; it++) { ch = false;
+        for (let i = 0; i < P.length && P.length > 3; i++) { const a = P[(i - 1 + P.length) % P.length], v = P[i], c = P[(i + 1) % P.length]; if (v.keep) continue;
+          const L = Math.hypot(c.x - a.x, c.y - a.y) || 1, u = ((v.x - a.x) * (c.x - a.x) + (v.y - a.y) * (c.y - a.y)) / (L * L), off = Math.abs((v.x - a.x) * (c.y - a.y) - (v.y - a.y) * (c.x - a.x)) / L;
+          if (off < 0.02 && Math.abs(v.z - (a.z + (c.z - a.z) * u)) < 0.05) { P.splice(i, 1); i--; ch = true; } } }
+      // triangulation par oreilles, en privilégiant les triangles les mieux formés
+      const tris = [], ang = (a, b, c) => { const ux = b.x - a.x, uy = b.y - a.y, vx = c.x - a.x, vy = c.y - a.y; return Math.abs(Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)); };
+      const inside = (p, a, b, c) => { const s1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), s2 = (c.x - b.x) * (p.y - b.y) - (c.y - b.y) * (p.x - b.x), s3 = (a.x - c.x) * (p.y - c.y) - (a.y - c.y) * (p.x - c.x); return s1 > 1e-9 && s2 > 1e-9 && s3 > 1e-9; };
+      let Q = P.slice(), guard = 0;
+      while (Q.length > 3 && guard++ < 2000) { let bi = -1, bs = -1;
+        for (let i = 0; i < Q.length; i++) { const a = Q[(i - 1 + Q.length) % Q.length], v = Q[i], c = Q[(i + 1) % Q.length];
+          if ((v.x - a.x) * (c.y - a.y) - (v.y - a.y) * (c.x - a.x) <= 1e-9) continue;   // sommet rentrant
+          if (Q.some((p) => p !== a && p !== v && p !== c && inside(p, a, v, c))) continue;
+          const sc = Math.min(ang(a, v, c), ang(v, c, a), ang(c, a, v)); if (sc > bs) { bs = sc; bi = i; } }
+        if (bi < 0) return null; const a = Q[(bi - 1 + Q.length) % Q.length], v = Q[bi], c = Q[(bi + 1) % Q.length]; tris.push([a, v, c]); Q.splice(bi, 1); }
+      if (Q.length === 3) tris.push(Q);
+      return tris.map((t) => t.map((p) => [p.x, p.y, p.z]));
+    };
     fill.forEach((pg) => { const R = openRing(pg[0]); if (Math.abs(ringArea(R)) < 0.05) return;
+      if (!pg.slice(1).length) { let T = null; try { T = tinFill(R); } catch (e) { T = null; } if (T && T.length) { out.push(...T); return; } }
       // égout : toiture existante le long de l'emprise d'origine, à moins de 2 m de la zone ajoutée
       const fo = b0.footprint, zs = [];
       for (let i = 0; i < fo.length; i++) { const a = fo[i], c = fo[(i + 1) % fo.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]), k = Math.max(1, Math.ceil(L / 0.5));
@@ -1357,7 +1395,7 @@ body.noscroll{overflow:hidden}
     const h = [], groups = groupsOf(res), rb = meta.regbl || {};
     const fen = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && counted(f, extra));
     const fenOut = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && !counted(f, extra));
-    if (b.extended) h.push([`Emprise complétée à la main (+${fmt(b.extended.add)} m² au sol) : toiture de la zone ajoutée = prolongement des pans voisins, plate à la hauteur d'égout voisine au-delà ; murs verticaux jusqu'à la toiture.`, 'Contrôler la hauteur et la forme du toit de la zone ajoutée (photo, plans)', 'Élevé']);
+    if (b.extended) h.push([`Emprise complétée à la main (+${fmt(b.extended.add)} m² au sol) : toiture de la zone ajoutée lissée entre la toiture existante et l'égout des nouveaux côtés ; murs verticaux jusqu'à la toiture.`, 'Contrôler la hauteur et la forme du toit de la zone ajoutée (photo, plans)', 'Élevé']);
     if (res.rebuilt) h.push([`Modèle 3D swisstopo incohérent pour ce bâtiment (${res.rebuilt.bad} % des faces supérieures sous la toiture réelle) : volume reconstruit à partir de l'emprise et de la couche toiture (murs verticaux, lucarnes et décrochements de façade simplifiés).`, 'Contrôler hauteurs et surfaces de murs sur place ou sur plans', 'Élevé']);
     if (fenOut.length) h.push([`${fenOut.length} ouverture(s) du sous-sol non chauffé (${fmt(fenOut.reduce((s, f) => s + (f.nombre || 1) * f.l * f.h, 0))} m²) : hors enveloppe, non comptées.`, 'Confirmer que le sous-sol est hors enveloppe', 'Faible']);
     if (res.zCut != null) h.push([`Murs comptés au-dessus de la cote ${fmt(extra.zBase)} m ${res.baseRef === 'plan' ? 'du plan (±0.00 = ' + fmt(res.zRefB) + ' m, déduit du faîte)' : 'par rapport au terrain moyen swissALTI3D'} (base de l'enveloppe chauffée, ex. plancher du rez) : partie sous-sol exclue.`, 'Vérifier le niveau du plancher sur sous-sol (coupe)', 'Moyen']);
