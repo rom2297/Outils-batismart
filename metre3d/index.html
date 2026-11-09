@@ -418,11 +418,12 @@ body.noscroll{overflow:hidden}
       <div class="ucat">
         <p class="note" style="margin:0 0 6px"><b>Valeurs U selon l'année de construction (état existant)</b> — <span id="uc-src"></span></p>
         <div class="row" id="uc-sel" style="flex-wrap:wrap;gap:8px 14px"></div>
+        <div class="row" id="uc-comp" style="flex-wrap:wrap;gap:8px 14px;margin-top:8px"></div>
         <div class="actions" style="margin-top:8px;align-items:center"><button type="button" id="uc-fill">Remplir les U manquants</button><button type="button" class="ghost" id="uc-all">Tout remplacer</button><span class="note" id="uc-st"></span></div>
         <details style="margin-top:6px"><summary class="note">Voir le catalogue (tous les 5 ans)</summary><p class="note" id="uc-law"></p><div class="tablewrap"><table class="edit" id="uc-tab"></table></div>
           <p class="note">Valeur à l'année près, interpolée entre les périodes. Murs, toitures, fenêtres : moyenne du catalogue Batismart (époques constructives) et des valeurs <a href="https://www.geak.ch/media/typische_uwerte_lebensdauer_kennzahlen_heizwaerme_strom_weblinks.pdf" target="_blank" rel="noopener">GEAK</a> / <a href="https://enbau-online.ch/bautechnik-der-gebaeudehuelle/1-3-gebaeudehuelle-seit-1900/" target="_blank" rel="noopener">enbau-online</a> / exigences SIA 380/1 et MoPEC ; fourchette = les deux sources réunies. Contre terrain, non chauffé, sols, portes et g : estimations. Pour un calcul exact d'une paroi connue : <a href="../isobase/" target="_blank" rel="noopener">IsoBase CH › ThermoPlan</a>.</p></details>
       </div>
-      <div class="tablewrap"><table class="edit" id="cb-lines"><thead><tr><th>Code</th><th>Élément</th><th>Type CECB</th><th>Orient.</th><th class="n">Net m²</th><th class="n" title="Valeur U [W/(m²K)]">U W/(m²K)</th><th class="n" title="Facteur de réduction b [–]">b</th></tr></thead><tbody></tbody></table></div>
+      <div class="tablewrap"><table class="edit" id="cb-lines"><thead><tr><th>Code</th><th>Élément</th><th>Type CECB</th><th>Orient.</th><th class="n">Net m²</th><th title="Composition : U calculé couche par couche (Rsi + Σ d/λ + Rse). Ép. = épaisseur totale mesurée (embrasure), + isol. = isolant ajouté (rénovation)">Composition · ép. cm · + isol. cm</th><th class="n" title="Valeur U [W/(m²K)]">U W/(m²K)</th><th class="n" title="Facteur de réduction b [–]">b</th></tr></thead><tbody></tbody></table></div>
       <p class="note">b vaut 1 contre l'extérieur et 0 contre chauffé (pré-rempli, modifiable). Contre non chauffé (sous-sol, combles, locaux annexes) : 0.8 d'office. Contre terrain, b est <b>calculé</b> (EN ISO 13370) d'après la 3D : surface, périmètre exposé, profondeur sous le terrain et U de l'élément — survolez la case pour le détail. Une valeur saisie à la main remplace le défaut ou le calcul (videz-la pour y revenir). Un U saisi peut être recopié sur les autres éléments du même type. Pour changer un type : onglet 4.</p>
       <h2 style="margin-top:18px">Fenêtres et portes</h2>
       <div class="tablewrap"><table class="edit" id="d3-thw"><thead><tr><th></th><th class="n">Surface m²</th><th class="n">U W/(m²K)</th><th class="n">g</th><th class="n">b</th><th class="n">Part vitrée</th><th class="n">Ombrage</th></tr></thead><tbody></tbody></table></div>
@@ -5107,7 +5108,7 @@ function setType(ps, t){
 const TH = () => (S.extra.th = S.extra.th || { line: {}, fen: { b: 1 }, porte: { b: 1, g: 0, fv: 0, fs: 1 }, occ: {} });
 const thOf = (l) => (TH().line[l.lk] || {});
 const numIn = (v) => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) ? x : undefined; };
-$('cb-lines').addEventListener('change', (e) => { const i = e.target.closest('input.th'); if(!i) return;
+$('cb-lines').addEventListener('change', (e) => { const c = e.target.closest('.cp'); if(c){ compSet(c.dataset.lk, c.dataset.k, c.value); return; } const i = e.target.closest('input.th'); if(!i) return;
   const L = TH().line, o = L[i.dataset.lk] = L[i.dataset.lk] || {}; const v = numIn(i.value); if(v == null) delete o[i.dataset.k]; else o[i.dataset.k] = v; if(i.dataset.k === 'U') delete o.src; if(i.dataset.k === 'b') delete o.bsrc;
   i.classList.toggle('need', v == null && !(i.dataset.k === 'b' && i.placeholder !== 'b'));
   const DCl = (cecbData() || {}).lines || [];
@@ -5158,12 +5159,13 @@ function renderCecbTab(){
   $('cb-check').innerHTML = it(!!S.cecbBuf, S.cecbBuf ? 'Fichier CECB chargé' : 'Fichier CECB à choisir') + it(m.aff, 'Type d\'affectation') + it(m.occ, 'Occupation') +
     it(!m.ub, m.ub ? `${m.ub} valeur(s) U / b` : 'U et b de l\'enveloppe') + it(!m.win, m.win ? `${m.win} valeur(s) fenêtres / portes` : 'Fenêtres et portes') +
     `<span class="${sre > 0 ? 'ok' : ''}" title="Onglet 2 Réglages › SRE">${sre > 0 ? 'SRE ' + fmt(sre) + ' m²' : 'SRE non saisie (onglet 2)'}</span>`;
-  $('cb-aff').value = TH().aff || ''; renderUcat();
+  $('cb-aff').value = TH().aff || ''; renderUcat(); renderUcomp();
   const rb = (S.meta && S.meta.regbl) || {}, raw = rb.raw || {};
   $('cb-proj').innerHTML = [['Adresse', S.meta && S.meta.label], ['EGID', S.meta && S.meta.egid], ['Parcelle', raw.lparz], ['Année', raw.gbauj || rb.periode], ['Catégorie RegBL', rb.classe], ['Altitude', S.res ? Math.round(S.res.tMean) + ' m' : null]]
     .filter((x) => x[1] != null && x[1] !== '').map(([k, v]) => `<dt>${k}</dt><dd>${esc(String(v))}</dd>`).join('');
   $('cb-lines').tBodies[0].innerHTML = DC.lines.map((l) => { const t = thOf(l), dB = C.defB(l);
     return `<tr><td class="mono" style="white-space:nowrap">${l.code}</td><td>${esc(l.name)}</td><td class="note">${esc(l.type)}</td><td>${esc(l.orientation)}</td><td class="n">${fmt(l.net)}</td>
+      <td style="white-space:nowrap">${compCell(l, t)}</td>
       <td class="n"><input type="number" step="0.01" min="0" class="th${t.U == null ? ' need' : ''}${t.src ? ' cat' : ''}" data-lk="${esc(l.lk)}" data-k="U" value="${t.U ?? ''}" placeholder="U" aria-label="U ${l.code}"${t.src ? ` title="Catalogue : ${esc(t.src)}"` : ''}></td>
       <td class="n"><input type="number" step="0.05" min="0" max="1" class="th${t.b == null && dB == null ? ' need' : ''}${t.bsrc ? ' cat' : ''}" data-lk="${esc(l.lk)}" data-k="b" value="${t.b ?? ''}" placeholder="${dB ?? (/terrain|non-chauff/i.test(l.type) && t.U == null ? 'après U' : 'b')}" aria-label="b ${l.code}"${t.bsrc ? ` title="${esc(t.bsrc)}"` : ''}></td></tr>`; }).join('');
   const ws = DC.wins.filter((w) => !w.out && w.f.l > 0 && w.f.h > 0), A = { fen: 0, porte: 0 };
@@ -5178,6 +5180,87 @@ function renderCecbTab(){
 /* Valeurs typiques W/(m²K). Murs, toits, fenêtres : GEAK « Typische U-Werte » et enbau-online.ch « Gebäudehülle seit 1900 » ;
    à partir de 1990 : exigences par élément SIA 380/1 (2001, 2009) et MoPEC/MuKEn 2008 et 2014, valeurs courantes de l'époque.
    Contre terrain / non chauffé / sols : estimation (dalle ou mur béton peu ou pas isolé avant 1980), pas de tableau publié. */
+/* ============================================================ compositions types (U couche par couche)
+   U = 1 / (Rsi + Σ d/λ + R lames d'air + Rse), SIA 180 / EN ISO 6946. λ de calcul usuels (SIA 2001, catalogue d'éléments OFEN).
+   « main » : couche ajustée quand on saisit l'épaisseur totale mesurée ; isolant ajouté : λ 0.035 (rénovation). Ossatures : λ équivalent
+   bois + isolant (part de bois ~12 %). */
+const RS = { mur: [0.13, 0.04], murV: [0.13, 0.13], toit: [0.10, 0.04], toitV: [0.10, 0.10], plaf: [0.10, 0.10], sol: [0.17, 0.04], solNC: [0.17, 0.17] };
+const COMP = [
+  // murs
+  { id: 'pierre', k: 'mur', lab: 'Moellons / pierre', y: 'av. 1920', rs: 'mur', L: [['Enduit intérieur', 0.02, 0.70], ['Maçonnerie de moellons', 0.55, 1.80, 1], ['Crépi', 0.025, 0.87]] },
+  { id: 'molasse', k: 'mur', lab: 'Molasse (grès tendre)', y: 'av. 1930', rs: 'mur', L: [['Enduit intérieur', 0.02, 0.70], ['Molasse', 0.45, 1.40, 1], ['Crépi', 0.02, 0.87]] },
+  { id: 'bpleine', k: 'mur', lab: 'Brique pleine ancienne', y: '1900–1950', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['Brique pleine', 0.32, 0.70, 1], ['Crépi', 0.02, 0.87]] },
+  { id: 'colomb', k: 'mur', lab: 'Colombage / ossature bois ancienne', y: 'av. 1950', rs: 'mur', L: [['Lambris / enduit', 0.02, 0.50], ['Bois + remplissage', 0.20, 0.35, 1], ['Bardage / crépi', 0.02, 0.50]] },
+  { id: 'btc', k: 'mur', lab: 'BTC simple (brique perforée)', y: '1945–1975', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['Brique terre cuite MB', 0.25, 0.44, 1], ['Crépi', 0.02, 0.87]] },
+  { id: 'plots', k: 'mur', lab: 'Plots ciment (bloc creux)', y: '1950–1980', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['Plot ciment creux', 0.20, 0.90, 1], ['Crépi', 0.02, 0.87]] },
+  { id: 'dairbtc', k: 'mur', lab: 'Double mur BTC, lame d\'air', y: '1955–1975', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['BTC intérieure', 0.15, 0.44, 1], ['Lame d\'air', 0.05, null, 0, 0.17], ['BTC extérieure', 0.12, 0.44], ['Crépi', 0.02, 0.87]] },
+  { id: 'disobtc', k: 'mur', lab: 'Double mur BTC isolé 4–6 cm', y: '1975–1990', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['BTC intérieure', 0.15, 0.44], ['Isolant d\'époque', 0.05, 0.040, 1], ['BTC extérieure', 0.12, 0.44], ['Crépi', 0.02, 0.87]] },
+  { id: 'disob90', k: 'mur', lab: 'Double mur isolé 8–12 cm', y: '1990–2005', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['BTC intérieure', 0.15, 0.44], ['Isolant', 0.10, 0.036, 1], ['BTC extérieure', 0.12, 0.44], ['Crépi', 0.02, 0.87]] },
+  { id: 'banu', k: 'mur', lab: 'Béton armé non isolé', y: '1960–1980', rs: 'mur', L: [['Enduit / peinture', 0.01, 0.70], ['Béton armé', 0.20, 2.30, 1]] },
+  { id: 'baint', k: 'mur', lab: 'Béton + isolation intérieure', y: '1975–1995', rs: 'mur', L: [['Plâtre / brique 6', 0.06, 0.44], ['Isolant', 0.05, 0.040, 1], ['Béton armé', 0.18, 2.30]] },
+  { id: 'bcell', k: 'mur', lab: 'Béton cellulaire', y: '1960–1990', rs: 'mur', L: [['Enduit intérieur', 0.01, 0.70], ['Béton cellulaire', 0.30, 0.14, 1], ['Crépi', 0.02, 0.87]] },
+  { id: 'ksite', k: 'mur', lab: 'Silico-calcaire + isolation périphérique', y: 'dès 1990', rs: 'mur', L: [['Enduit intérieur', 0.01, 0.70], ['Silico-calcaire', 0.18, 0.99], ['EPS / laine', 0.14, 0.036, 1], ['Crépi mince', 0.01, 0.70]] },
+  { id: 'btcite', k: 'mur', lab: 'BTC + isolation périphérique crépie', y: 'dès 1995 / rénové', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['BTC', 0.175, 0.44], ['EPS / laine', 0.16, 0.034, 1], ['Crépi mince', 0.01, 0.70]] },
+  { id: 'ventil', k: 'mur', lab: 'Façade ventilée (laine entre lattage)', y: 'dès 1990 / rénové', rs: 'murV', L: [['Enduit intérieur', 0.015, 0.70], ['BTC / béton', 0.18, 0.44], ['Laine + lattage (λ équiv.)', 0.16, 0.040, 1]] },
+  { id: 'bisol', k: 'mur', lab: 'Brique isolante monolithe', y: 'dès 2005', rs: 'mur', L: [['Enduit intérieur', 0.015, 0.70], ['Brique isolante', 0.425, 0.09, 1], ['Crépi isolant', 0.03, 0.10]] },
+  { id: 'ossbois', k: 'mur', lab: 'Ossature bois isolée', y: 'dès 2000', rs: 'murV', L: [['Plâtre', 0.015, 0.25], ['OSB', 0.015, 0.13], ['Montants + laine (λ équiv.)', 0.20, 0.045, 1], ['Panneau fibre de bois', 0.06, 0.045]] },
+  // toits
+  { id: 'tnu', k: 'toit', lab: 'Toit en pente non isolé (lambris)', y: 'av. 1970', rs: 'toitV', L: [['Lambris', 0.02, 0.13], ['Lame d\'air entre chevrons', 0.12, null, 1, 0.16]] },
+  { id: 'tiso6', k: 'toit', lab: 'Toit en pente, 6 cm entre chevrons', y: '1975–1990', rs: 'toitV', L: [['Lambris / plâtre', 0.02, 0.13], ['Chevrons + laine (λ équiv.)', 0.06, 0.051, 1]] },
+  { id: 'tiso12', k: 'toit', lab: 'Toit en pente, 12 cm entre chevrons', y: '1990–2005', rs: 'toitV', L: [['Lambris / plâtre', 0.02, 0.13], ['Chevrons + laine (λ équiv.)', 0.12, 0.046, 1]] },
+  { id: 'tiso20', k: 'toit', lab: 'Toit en pente, 20 cm entre + sur chevrons', y: 'dès 2005 / rénové', rs: 'toitV', L: [['Plâtre', 0.015, 0.25], ['Chevrons + laine (λ équiv.)', 0.16, 0.042, 1], ['Panneau sous-toiture fibre de bois', 0.04, 0.045]] },
+  { id: 'tpnu', k: 'toit', lab: 'Toit plat béton peu isolé (liège 3 cm)', y: '1960–1975', rs: 'toit', L: [['Béton armé', 0.20, 2.30], ['Liège / isolant', 0.03, 0.045, 1], ['Étanchéité', 0.01, 0.23]] },
+  { id: 'tpiso', k: 'toit', lab: 'Toit plat béton isolé 12–16 cm', y: 'dès 1995', rs: 'toit', L: [['Béton armé', 0.22, 2.30], ['Isolant (EPS / PUR)', 0.14, 0.033, 1], ['Étanchéité', 0.01, 0.23]] },
+  { id: 'pbois', k: 'plaf', lab: 'Plancher combles bois + remplissage', y: 'av. 1950', rs: 'plaf', L: [['Plafond plâtre / lattis', 0.02, 0.40], ['Solives + remplissage (scories, sable)', 0.18, 0.60, 1], ['Plancher', 0.025, 0.13]] },
+  { id: 'pbeton', k: 'plaf', lab: 'Dalle combles béton nue', y: '1950–1975', rs: 'plaf', L: [['Béton armé', 0.18, 2.30, 1], ['Chape', 0.04, 1.40]] },
+  { id: 'pbiso', k: 'plaf', lab: 'Dalle combles + laine posée 10–16 cm', y: 'rénové / dès 1980', rs: 'plaf', L: [['Béton armé ou plancher', 0.18, 2.30], ['Laine minérale', 0.12, 0.036, 1]] },
+  // sols
+  { id: 'snu', k: 'sol', lab: 'Dalle béton non isolée + chape', y: 'av. 1975', rs: 'sol', L: [['Revêtement', 0.01, 0.50], ['Chape', 0.06, 1.40], ['Béton armé', 0.20, 2.30, 1]] },
+  { id: 'siso3', k: 'sol', lab: 'Chape flottante sur 2–3 cm', y: '1970–1990', rs: 'sol', L: [['Revêtement', 0.01, 0.50], ['Chape', 0.06, 1.40], ['Isolant phonique', 0.03, 0.040, 1], ['Béton armé', 0.20, 2.30]] },
+  { id: 'siso8', k: 'sol', lab: 'Dalle isolée 8–10 cm', y: '1990–2010', rs: 'sol', L: [['Revêtement', 0.01, 0.50], ['Chape', 0.07, 1.40], ['Isolant', 0.08, 0.036, 1], ['Béton armé', 0.22, 2.30]] },
+  { id: 'siso14', k: 'sol', lab: 'Dalle isolée 12–16 cm (ou plafond de cave isolé)', y: 'dès 2010 / rénové', rs: 'sol', L: [['Revêtement', 0.01, 0.50], ['Chape', 0.07, 1.40], ['Isolant', 0.14, 0.034, 1], ['Béton armé', 0.22, 2.30]] },
+  { id: 'sbois', k: 'sol', lab: 'Plancher bois sur cave', y: 'av. 1950', rs: 'solNC', L: [['Plancher', 0.025, 0.13], ['Solives + vide', 0.16, null, 1, 0.18], ['Plafond plâtre / lattis', 0.02, 0.40]] } ];
+const COMPK = (l) => l.kind === 'mur' ? 'mur' : l.kind === 'sol' ? 'sol' : (l.kind === 'plafond' || (!/^Toit/.test(l.type) && !/terrain|sous terre/.test(l.type))) ? 'plaf' : 'toit';
+function compU(c, ep, iso){                      // ep : épaisseur totale mesurée [cm] ; iso : isolant ajouté [cm]
+  const L = c.L.map((x) => x.slice()), mi = L.findIndex((x) => x[3]), tot = L.reduce((a, x) => a + x[1], 0);
+  if(ep > 0 && mi >= 0){ L[mi][1] = Math.max(0.01, L[mi][1] + ep / 100 - tot); }
+  const [ri, re] = RS[c.rs] || RS.mur; let R = ri + re;
+  L.forEach((x) => { R += x[2] ? x[1] / x[2] : (x[4] || 0); });
+  if(iso > 0) R += iso / 100 / 0.035;
+  const U = 1 / R; return { U: U >= 1 ? Math.round(U * 20) / 20 : Math.round(U * 100) / 100, R, L, tot: L.reduce((a, x) => a + x[1], 0) };
+}
+function compCell(l, t){
+  const k = COMPK(l), opts = COMP.filter((c) => c.k === k), lk = esc(l.lk);
+  return `<select class="cp" data-lk="${lk}" data-k="comp" style="max-width:190px" title="${t.comp ? esc(compTip(t)) : 'Choisir une composition : U calculé'}"><option value="">—</option>${opts.map((c) => `<option value="${c.id}"${t.comp === c.id ? ' selected' : ''}>${esc(c.lab)} (${esc(c.y)})</option>`).join('')}</select>`
+    + ` <input class="cp" data-lk="${lk}" data-k="ep" type="number" min="5" max="120" step="1" style="width:52px" placeholder="ép." value="${t.ep ?? ''}" title="Épaisseur totale mesurée [cm] (embrasure, plans) : ajuste la couche porteuse ou l'isolant d'origine">`
+    + ` <input class="cp" data-lk="${lk}" data-k="iso" type="number" min="0" max="60" step="1" style="width:52px" placeholder="+isol" value="${t.iso ?? ''}" title="Isolant ajouté lors d'une rénovation [cm], λ 0.035">`;
+}
+function compTip(t){ const c = COMP.find((x) => x.id === t.comp); if(!c) return ''; const r = compU(c, t.ep, t.iso);
+  return `${c.lab} — ${r.L.map((x) => `${x[0]} ${Math.round(x[1] * 1000) / 10} cm${x[2] ? ' λ ' + x[2] : ' R ' + x[4]}`).join(' | ')}${t.iso > 0 ? ` | isolant ajouté ${t.iso} cm λ 0.035` : ''} → U ${r.U}`; }
+function compApply(o){ const c = COMP.find((x) => x.id === o.comp); if(!c){ delete o.comp; return; } const r = compU(c, o.ep, o.iso); o.U = r.U;
+  o.src = `Composition : ${c.lab}${o.ep > 0 ? `, ép. totale ${o.ep} cm` : ` (ép. type ${Math.round(r.tot * 100)} cm)`}${o.iso > 0 ? `, + ${o.iso} cm isolant` : ''} — U = 1/(Rsi + Σd/λ + Rse) = ${r.U}`; }
+function compSet(lk, k, v){
+  const L = TH().line, o = L[lk] = L[lk] || {};
+  if(k === 'comp'){ if(v) o.comp = v; else { delete o.comp; delete o.ep; delete o.iso; } }
+  else { const n = numIn(v); if(n == null || n <= 0) delete o[k]; else o[k] = n; }
+  if(o.comp) compApply(o);
+  // même composition proposée pour les autres éléments du même genre sans composition
+  const DCl = (cecbData() || {}).lines || [], row = DCl.find((x) => x.lk === lk);
+  if(k === 'comp' && v && row){ const same = DCl.filter((x) => x.lk !== lk && COMPK(x) === COMPK(row) && x.type === row.type && !(L[x.lk] && L[x.lk].comp));
+    if(same.length && confirm(`Même composition pour les ${same.length} autre(s) élément(s) « ${row.type} » ?`)) same.forEach((x) => { const q = L[x.lk] = L[x.lk] || {}; q.comp = v; if(o.ep) q.ep = o.ep; if(o.iso) q.iso = o.iso; compApply(q); }); }
+  renderCecbTab(); undoLater();
+}
+// sélection rapide par groupe (tous les murs, tous les toits…)
+function renderUcomp(){
+  const el = $('uc-comp'); if(!el) return;
+  el.innerHTML = '<span class="note" style="width:100%">Ou par <b>composition</b> (plus précis) : U calculé couche par couche, appliqué à tous les éléments du groupe. Ajustable ensuite ligne par ligne dans le tableau (épaisseur mesurée, isolant ajouté).</span>'
+    + [['mur', 'Murs'], ['toit', 'Toit'], ['plaf', 'Plafond combles'], ['sol', 'Sol']].map(([k, lab]) => `<label>${lab}<select data-ucg="${k}" style="max-width:210px"><option value="">—</option>${COMP.filter((c) => c.k === k).map((c) => `<option value="${c.id}">${esc(c.lab)} · U ${compU(c).U}</option>`).join('')}</select></label>`).join('');
+}
+document.addEventListener('change', (e) => { const s = e.target.closest && e.target.closest('[data-ucg]'); if(!s || !s.value) return;
+  const DC = S.res ? cecbData() : null; if(!DC) return; const L = TH().line; let n = 0;
+  DC.lines.forEach((l) => { if(COMPK(l) !== s.dataset.ucg) return; if(s.dataset.ucg === 'mur' && !/^Mur extérieur|^Façade ventilée/.test(l.type)) return;   // murs contre terrain / non chauffé : ligne par ligne
+    const o = L[l.lk] = L[l.lk] || {}; o.comp = s.value; compApply(o); n++; });
+  $('uc-st').textContent = `${n} élément(s) : composition « ${COMP.find((c) => c.id === s.value).lab} » appliquée.`; s.value = ''; renderCecbTab(); undoLater(); });
 const UPER = [['M0', 'avant 1919'], ['M1', '1919–1945'], ['M2', '1946–1960'], ['M3', '1961–1970'], ['M4', '1971–1980'], ['M5', '1981–1990'], ['M6', '1991–2000'], ['M7', '2001–2010'], ['M8', '2011–2015'], ['M9', 'dès 2016']];
 const UTYPO = ['Maçonnerie pleine (moellons, pierre), pas d\'isolant ; simple vitrage ou doubles fenêtres', 'Maçonnerie pleine ~40 cm, pas d\'isolant ; simple vitrage ou doubles fenêtres',
   'Briques creuses, béton, pas d\'isolant ; double vitrage bois d\'époque', 'Briques creuses (parfois double mur), béton armé ; double vitrage d\'époque',
@@ -5240,7 +5323,7 @@ function renderUcat(){
 function ucatFill(all){
   const DC = S.res ? cecbData() : null; if(!DC) return; const t = TH(), uy = t.uyear || {}, L = t.line; let n = 0, miss = [];
   DC.lines.forEach((l) => { const [g, k] = ucatOf(l), y = uy[g]; if(!(y > 0)){ miss.push(UGRP[g]); return; }
-    const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; o.U = uAt(k, y); const p = perOf(y);
+    const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; if(o.comp && !all) return; delete o.comp; delete o.ep; delete o.iso; o.U = uAt(k, y); const p = perOf(y);
     const lw = uLaw(k, y), capped = lw && lw.v < uAt0(k, y);
     o.src = `${UCAT[k].lab}, année ${y} (période ${UPER[p][1]}${UCAT[k].r ? ', fourchette ' + UCAT[k].r[p] : ''}) — ${UCAT[k].src}${capped ? ` — limité à ${fmt(lw.v)} : ${lw.L.lab} (en vigueur dès ${lw.L.y})` : ''}`; n++; });
   const y = uy.fen;
