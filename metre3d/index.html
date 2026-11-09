@@ -428,9 +428,9 @@ body.noscroll{overflow:hidden}
       <h2 style="margin-top:18px">Fenêtres et portes</h2>
       <div class="tablewrap"><table class="edit" id="d3-thw"><thead><tr><th></th><th class="n">Surface m²</th><th class="n">U W/(m²K)</th><th class="n">g</th><th class="n">b</th><th class="n">Part vitrée</th><th class="n">Ombrage</th></tr></thead><tbody></tbody></table></div>
       <p class="note" id="cb-wins"></p>
-      <div class="actions" style="margin-top:8px;align-items:center"><button type="button" class="ghost" id="cb-shade">Calculer l'ombrage (bâtiments voisins + débords)</button><span class="note" id="cb-shade-st"></span></div>
-      <div class="tablewrap" id="cb-shade-box" hidden><table class="edit" id="cb-shade-t"><thead><tr><th>Fenêtre</th><th>Façade</th><th>Niveau</th><th class="n">l × h m</th><th class="n">Horizon °</th><th class="n">Direct reçu</th><th class="n">Ciel visible</th><th class="n">Ombrage F<sub>S</sub></th></tr></thead><tbody></tbody></table></div>
-      <p class="note" id="cb-shade-note" hidden>Calcul géométrique sur la 3D (pas les tableaux SIA 380/1) : course du soleil d'octobre à avril (ciel clair), voûte céleste devant chaque fenêtre (diffus isotrope, 55 % du global), obstacles = bâtiments à moins de 120 m, le bâtiment lui-même et ses débords de toiture. Arbres, balcons et stores ne sont pas modélisés. F<sub>S</sub> = rayonnement reçu avec obstacles / sans obstacle ; la colonne Ombrage du CECB reçoit la moyenne pondérée par la surface de chaque ligne Fe. Fenêtres de toit : non calculées.</p>
+      <div class="actions" style="margin-top:8px;align-items:center"><label class="note" title="Profondeur de l'embrasure extérieure (vitrage → nu de façade). Vide : déduite de la composition du mur (épaisseur − 15 cm), sinon 30 cm avant 1930, 20 cm ensuite">Embrasure <input type="number" id="cb-reveal" min="0" max="80" step="1" style="width:60px" placeholder="auto"> cm</label><button type="button" class="ghost" id="cb-shade">Calculer l'ombrage (relief, voisins, débords, embrasures)</button><span class="note" id="cb-shade-st"></span></div>
+      <div class="tablewrap" id="cb-shade-box" hidden><table class="edit" id="cb-shade-t"><thead><tr><th>Fenêtre</th><th>Façade</th><th>Niveau</th><th class="n">l × h m</th><th class="n">Horizon °</th><th class="n">Embr. cm</th><th class="n">Direct reçu</th><th class="n">Ciel visible</th><th class="n">Ombrage F<sub>S</sub></th></tr></thead><tbody></tbody></table></div>
+      <p class="note" id="cb-shade-note" hidden>Calcul géométrique sur la 3D (pas les tableaux SIA 380/1) : course du soleil d'octobre à avril (ciel clair), voûte céleste devant chaque fenêtre (diffus isotrope, 55 % du global), obstacles = relief (swissALTI3D jusqu'à 8 km, courbure terrestre), bâtiments à moins de 120 m, le bâtiment lui-même, ses débords de toiture et l'embrasure de chaque fenêtre (linteau et tableaux). Arbres, balcons et stores ne sont pas modélisés. F<sub>S</sub> = rayonnement reçu avec obstacles / sans obstacle ; la colonne Ombrage du CECB reçoit la moyenne pondérée par la surface de chaque ligne Fe. Fenêtres de toit : non calculées.</p>
       <div class="actions" style="margin-top:16px;align-items:center"><button type="button" id="cb-export">Exporter vers l'outil CECB</button><button type="button" class="ghost" id="cb-file">Choisir le fichier CECB…</button><span class="note" id="cb-fname"></span></div>
       <p class="note">Dans l'outil CECB : « Générer template excel » pour ce bâtiment, puis choisissez ce fichier ici. Le fichier rempli (…_metre3D.xls) se réimporte dans l'outil CECB. État, priorité et installations techniques restent à saisir dans l'outil CECB.</p>
     </section>
@@ -4590,6 +4590,27 @@ function sunDirs(lat){                         // directions du soleil (x = est,
 }
 function skyDirs(){ const out = []; for(let i = 0; i < 12; i++){ const alt = (i + 0.5) * 7.5 * Math.PI / 180; for(let j = 0; j < 36; j++){ const az = (j + 0.5) * 10 * Math.PI / 180;
   out.push({ d: [Math.cos(alt) * Math.sin(az), Math.cos(alt) * Math.cos(az), Math.sin(alt)], w: Math.cos(alt) }); } } return out; }   // poids = angle solide
+/* Horizon du relief : 24 profils swissALTI3D de 8 km autour du bâtiment (API geo.admin), points tous les ~40 m.
+   Angle d'un point : atan((z − courbure − z fenêtre) / d), courbure = d²/2R × (1 − 0.13 réfraction). Points à < 60 m ignorés (bâtiments voisins en 3D). */
+async function terrainHorizon(){
+  const fp = S.b.footprint, cx = fp.reduce((s2, p) => s2 + p[0], 0) / fp.length, cy = fp.reduce((s2, p) => s2 + p[1], 0) / fp.length, key = `${cx.toFixed(0)}|${cy.toFixed(0)}`;
+  if(S.horizon && S.horizon.key === key) return S.horizon;
+  const N = 24, Lm = 8000, prof = await Promise.all([...Array(N).keys()].map(async (i) => { const az = i * 2 * Math.PI / N, x1 = cx + Math.sin(az) * Lm, y1 = cy + Math.cos(az) * Lm;
+    const geom = JSON.stringify({ type: 'LineString', coordinates: [[+cx.toFixed(1), +cy.toFixed(1)], [+x1.toFixed(1), +y1.toFixed(1)]] });
+    const j = await getJSON(`${API}/profile.json`, { geom, sr: '2056', nb_points: '200' }); return j.map((p) => [p.dist, p.alts.DTM2 ?? p.alts.COMB]).filter((q) => q[0] > 60 && isFinite(q[1])); }));
+  S.horizon = { key, N, prof }; return S.horizon;
+}
+function horizonAt(H, z0){                        // angles d'horizon (rad) par azimut pour une altitude de fenêtre z0
+  return H.prof.map((pr) => { let m = 0; pr.forEach(([d, z]) => { const a = Math.atan2(z - d * d / (2 * 6371000) * 0.87 - z0, d); if(a > m) m = a; }); return m; }); }
+const hzBlock = (hz, dir) => { if(!hz) return false; const N = hz.length, az = (Math.atan2(dir[0], dir[1]) + 2 * Math.PI) % (2 * Math.PI), f = az / (2 * Math.PI) * N, i = Math.floor(f) % N, j = (i + 1) % N, r = f - Math.floor(f);
+  return Math.asin(Math.max(-1, Math.min(1, dir[2]))) < hz[i] * (1 - r) + hz[j] * r; };
+function revealOf(f, DC){                         // profondeur d'embrasure [m]
+  if(S.extra.reveal != null) return S.extra.reveal / 100;
+  const w = DC.winOf.get(f), ln = w && w.piece && DC.lineOf.get(w.piece.key), t = ln ? thOf(ln) : {};
+  const c = t.comp && COMP.find((x) => x.id === t.comp);
+  if(c){ const r = compU(c, t.ep, t.iso, t.ep > 0 ? null : t.md), tot = r.tot + (t.iso > 0 ? t.iso / 100 : 0); return Math.max(0.08, Math.min(0.5, tot - 0.15)); }
+  const y = (TH().uyear || {}).mur || 1960; return y < 1930 ? 0.30 : 0.20;
+}
 function computeShading(){
   if(!S.res) return null; const DC = cecbData(); if(!DC) return null;
   const groups = shadeScene(), sun = sunDirs(S.sel && S.sel.lat ? S.sel.lat : 46.8), sky = skyDirs();
@@ -4598,19 +4619,22 @@ function computeShading(){
   (S.extra.fenetres || []).forEach((f) => {
     const w = DC.winOf.get(f); if(!w || w.out || !f.pos || !f.facade || /^Pan /.test(f.facade)){ return; }
     const loc = locateOn(f.facade, f.pos.s); if(!loc) return; const e = loc.e, zb = zAbs(f.facade, f.pos); if(!isFinite(zb)) return;
-    const n = [e.n[0], e.n[1], 0], pts = [];
-    [[0, 0.5], [-0.35, 0.2], [0.35, 0.2], [-0.35, 0.8], [0.35, 0.8]].forEach(([du, dv]) => { const sl = loc.sl + du * f.l;
-      pts.push([e.p1[0] + e.u[0] * sl + n[0] * 0.08, e.p1[1] + e.u[1] * sl + n[1] * 0.08, zb + dv * f.h]); });
+    const n = [e.n[0], e.n[1], 0], pts = [], rv = revealOf(f, DC), hz = S.horizon ? horizonAt(S.horizon, zb + f.h / 2) : null;
+    // 3 × 3 points sur le vitrage ; embrasure : le rayon doit ressortir par l'ouverture (linteau, tableaux, appui)
+    [0.17, 0.5, 0.83].forEach((du0) => [0.17, 0.5, 0.83].forEach((dv) => { const du = du0 - 0.5, sl = loc.sl + du * f.l;
+      pts.push({ o: [e.p1[0] + e.u[0] * sl + n[0] * 0.08, e.p1[1] + e.u[1] * sl + n[1] * 0.08, zb + dv * f.h], pu: du * f.l, pv: dv * f.h }); }));
+    const inRev = (q, d) => { const c = d[0] * n[0] + d[1] * n[1]; if(rv <= 0) return false; const t = rv / c, ou = (d[0] * e.u[0] + d[1] * e.u[1]) * t, ov = d[2] * t;
+      return Math.abs(q.pu + ou) > f.l / 2 || q.pv + ov > f.h || q.pv + ov < 0; };
     let b0 = 0, b1 = 0, s0 = 0, s1 = 0;
-    pts.forEach((o) => {
-      sun.forEach((x) => { const c = x.d[0] * n[0] + x.d[1] * n[1]; if(c <= 0) return; const g = x.dni * c; b0 += g; if(!rayHit(groups, o, x.d)) b1 += g; });
-      sky.forEach((x) => { const c = x.d[0] * n[0] + x.d[1] * n[1]; if(c <= 0) return; const g = x.w * c; s0 += g; if(!rayHit(groups, o, x.d)) s1 += g; });
+    pts.forEach((q) => { const o = q.o;
+      sun.forEach((x) => { const c = x.d[0] * n[0] + x.d[1] * n[1]; if(c <= 0) return; const g = x.dni * c; b0 += g; if(!inRev(q, x.d) && !hzBlock(hz, x.d) && !rayHit(groups, o, x.d)) b1 += g; });
+      sky.forEach((x) => { const c = x.d[0] * n[0] + x.d[1] * n[1]; if(c <= 0) return; const g = x.w * c; s0 += g; if(!inRev(q, x.d) && !hzBlock(hz, x.d) && !rayHit(groups, o, x.d)) s1 += g; });
     });
     const D0 = 0.5 * kd * Bh * pts.length;                                        // diffus du ciel sur une paroi verticale, sans obstacle
     const fs = (b1 + D0 * (s1 / (s0 || 1))) / ((b0 + D0) || 1);
     // angle d'horizon dans l'axe de la fenêtre (info, pour comparaison avec les tableaux SIA)
-    let hz = 0; for(let a = 0; a <= 60; a += 1){ const r = a * Math.PI / 180, d = [Math.cos(r) * n[0], Math.cos(r) * n[1], Math.sin(r)]; if(!rayHit(groups, pts[0], d)){ hz = a; break; } hz = a; }
-    out.push({ f, fs: Math.round(fs * 100) / 100, hz, dir: s1 / (s0 || 1), beam: b0 ? b1 / b0 : 1 });
+    let ha = 0; for(let a = 0; a <= 60; a += 1){ const r = a * Math.PI / 180, d = [Math.cos(r) * n[0], Math.cos(r) * n[1], Math.sin(r)]; if(!hzBlock(hz, d) && !rayHit(groups, pts[4].o, d)){ ha = a; break; } ha = a; }
+    out.push({ f, fs: Math.round(fs * 100) / 100, hz: ha, rev: rv, dir: s1 / (s0 || 1), beam: b0 ? b1 / b0 : 1 });
   });
   return out;
 }
@@ -5125,18 +5149,21 @@ $('d3-thw').addEventListener('change', (e) => { const i = e.target.closest('inpu
 $('c-occ').addEventListener('change', () => setTimeout(renderCecbTab, 0));
 $('cb-aff').onchange = (e) => { if(e.target.value) TH().aff = e.target.value; else delete TH().aff; renderCecbTab(); };
 $('cb-file').onclick = () => $('cecb-file').click();
-$('cb-shade').onclick = () => {
+$('cb-reveal').addEventListener('change', (e) => { const v = numIn(e.target.value); if(v == null) delete S.extra.reveal; else S.extra.reveal = v; });
+$('cb-shade').onclick = async () => {
+  $('cb-shade-st').textContent = 'Relief (swissALTI3D)…'; let hzOk = true;
+  try { await terrainHorizon(); } catch(ex){ hzOk = false; }
   $('cb-shade-st').textContent = 'Calcul en cours…';
   setTimeout(() => { const t0 = performance.now(); const R = computeShading(); if(!R){ $('cb-shade-st').textContent = 'Analysez d\'abord un bâtiment.'; return; }
-    R.forEach((r) => { r.f.fs = r.fs; r.f.fsInfo = { hz: r.hz, beam: +r.beam.toFixed(2), sky: +r.dir.toFixed(2) }; });
+    R.forEach((r) => { r.f.fs = r.fs; r.f.fsInfo = { hz: r.hz, rev: r.rev, beam: +r.beam.toFixed(2), sky: +r.dir.toFixed(2) }; });
     const DCx = cecbData(), nNo = (S.extra.fenetres || []).filter((f) => { const w = DCx.winOf.get(f); return w && !w.out && f.type !== 'Porte' && f.fs == null && !/^Pan /.test(f.facade || ''); }).length;
-    $('cb-shade-st').textContent = `${R.length} fenêtre(s) calculée(s) en ${((performance.now() - t0) / 1000).toFixed(1)} s${nNo ? ` · ${nNo} sans position sur la façade (repère façade manquant) : valeur globale utilisée` : ''}.`;
+    $('cb-shade-st').textContent = `${R.length} fenêtre(s) calculée(s) en ${((performance.now() - t0) / 1000).toFixed(1)} s${hzOk && S.horizon ? '' : ' · relief non disponible (hors ligne ?) : non pris en compte'}${nNo ? ` · ${nNo} sans position sur la façade (repère façade manquant) : valeur globale utilisée` : ''}.`;
     renderShade(); renderCecbTab(); }, 30);
 };
 function renderShade(){
   const L = (S.extra.fenetres || []).filter((f) => f.fs != null); $('cb-shade-box').hidden = $('cb-shade-note').hidden = !L.length; if(!L.length) return;
   $('cb-shade-t').tBodies[0].innerHTML = L.map((f) => { const i = (S.extra.fenetres || []).indexOf(f), x = f.fsInfo || {};
-    return `<tr><td class="mono">${f.type === 'Porte' ? 'P' : 'F'}-${String(i + 1).padStart(2, '0')}</td><td>${esc(f.facade || '')}</td><td>${esc(f.niveau || '')}</td><td class="n">${fmt(f.l)} × ${fmt(f.h)}</td><td class="n">${x.hz ?? '—'}</td><td class="n">${x.beam != null ? Math.round(x.beam * 100) + ' %' : '—'}</td><td class="n">${x.sky != null ? Math.round(x.sky * 100) + ' %' : '—'}</td><td class="n"><b>${fmt(f.fs)}</b></td></tr>`; }).join('');
+    return `<tr><td class="mono">${f.type === 'Porte' ? 'P' : 'F'}-${String(i + 1).padStart(2, '0')}</td><td>${esc(f.facade || '')}</td><td>${esc(f.niveau || '')}</td><td class="n">${fmt(f.l)} × ${fmt(f.h)}</td><td class="n">${x.hz ?? '—'}</td><td class="n">${x.rev != null ? Math.round(x.rev * 100) : '—'}</td><td class="n">${x.beam != null ? Math.round(x.beam * 100) + ' %' : '—'}</td><td class="n">${x.sky != null ? Math.round(x.sky * 100) + ' %' : '—'}</td><td class="n"><b>${fmt(f.fs)}</b></td></tr>`; }).join('');
 }
 $('cecb-file').addEventListener('change', () => setTimeout(renderCecbTab, 300));
 $('cb-export').onclick = () => { dlCecb(); S.exported = true; setTimeout(renderGuide, 0); };
