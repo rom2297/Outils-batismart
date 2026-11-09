@@ -5258,18 +5258,19 @@ const ISO_ITE = [[0, 0.06], [1985, 0.08], [1995, 0.10], [2002, 0.12], [2010, 0.1
 const ISO_PL = [[0, 0.06], [1990, 0.10], [2005, 0.16], [2015, 0.20]];
 const FAM = {
   mur: [
-    { id: 'pierre', lab: 'Moellons / pierre', f: () => ({ c: 'pierre' }) },
-    { id: 'molasse', lab: 'Molasse', f: () => ({ c: 'molasse' }) },
-    { id: 'simple', lab: 'Maçonnerie simple (brique, BTC)', f: (y) => ({ c: y < 1945 ? 'bpleine' : 'btc' }) },
+    { id: 'pierre', lab: 'Moellons / pierre', orig: 1930, f: () => ({ c: 'pierre' }) },
+    { id: 'molasse', lab: 'Molasse', orig: 1930, f: () => ({ c: 'molasse' }) },
+    { id: 'simple', lab: 'Maçonnerie simple (brique, BTC)', orig: 1975, f: (y) => ({ c: y < 1945 ? 'bpleine' : 'btc' }) },
     { id: 'double', lab: 'Double mur', f: (y) => y < 1973 ? { c: 'dairbtc' } : y < 1981 ? { c: 'disobtc', md: 0.04 } : y < 1991 ? { c: 'disobtc', md: 0.06 } : y < 2001 ? { c: 'disob90', md: 0.10 } : y < 2010 ? { c: 'disob90', md: 0.12 } : { c: 'disob90', md: 0.16 } },
-    { id: 'beton', lab: 'Béton (isolé intérieur dès 1975)', f: (y) => y < 1975 ? { c: 'banu' } : { c: 'baint', md: y < 1986 ? 0.04 : 0.06 } },
-    { id: 'plots', lab: 'Plots ciment', f: () => ({ c: 'plots' }) },
+    { id: 'beton', lab: 'Béton non isolé', orig: 1975, f: () => ({ c: 'banu' }) },
+    { id: 'betonint', lab: 'Béton isolé intérieur', f: (y) => ({ c: 'baint', md: y < 1986 ? 0.04 : y < 2000 ? 0.06 : 0.10 }) },
+    { id: 'plots', lab: 'Plots ciment', orig: 1980, f: () => ({ c: 'plots' }) },
     { id: 'ite', lab: 'Isolation périphérique crépie', f: (y) => ({ c: 'btcite', md: byY(y, ISO_ITE) }) },
     { id: 'ventil', lab: 'Façade ventilée', f: (y) => ({ c: 'ventil', md: byY(y, ISO_ITE) }) },
     { id: 'bois', lab: 'Bois (colombage / ossature)', f: (y) => y < 1950 ? { c: 'colomb' } : { c: 'ossbois', md: byY(y, [[0, 0.10], [1990, 0.16], [2010, 0.22]]) } },
     { id: 'bisol', lab: 'Brique isolante / béton cellulaire', f: (y) => ({ c: y < 2000 ? 'bcell' : 'bisol' }) } ],
   toit: [
-    { id: 'nu', lab: 'Pente non isolée', f: () => ({ c: 'tnu' }) },
+    { id: 'nu', lab: 'Pente non isolée', orig: 1975, f: () => ({ c: 'tnu' }) },
     { id: 'pente', lab: 'Pente isolée', f: (y) => y < 2005 ? { c: 'tiso12', md: byY(y, [[0, 0.06], [1985, 0.10], [1995, 0.14]]) } : { c: 'tiso20', md: y < 2015 ? 0.16 : 0.20 } },
     { id: 'plat', lab: 'Toit plat', f: (y) => y < 1975 ? { c: 'tpnu' } : { c: 'tpiso', md: byY(y, ISO_PL) } } ],
   plaf: [
@@ -5277,10 +5278,19 @@ const FAM = {
     { id: 'beton', lab: 'Dalle béton', f: (y) => y < 1975 ? { c: 'pbeton' } : { c: 'pbiso', md: byY(y, ISO_PL) } } ],
   sol: [
     { id: 'dalle', lab: 'Dalle béton', f: (y) => y < 1970 ? { c: 'snu' } : y < 1990 ? { c: 'siso3' } : { c: y < 2005 ? 'siso8' : 'siso14', md: byY(y, [[0, 0.08], [2005, 0.12], [2015, 0.16]]) } },
-    { id: 'bois', lab: 'Plancher bois sur cave', f: () => ({ c: 'sbois' }) } ] };
+    { id: 'bois', lab: 'Plancher bois sur cave', orig: 1960, f: () => ({ c: 'sbois' }) } ] };
 const FAMY = { mur: 'mur', toit: 'toit', plaf: 'toit', sol: 'sol' };            // année utilisée : celle du groupe
-function famRes(k, id, y){ const F = (FAM[k] || []).find((x) => x.id === id); if(!F || !(y > 0)) return null; const r = F.f(y), c = COMP.find((x) => x.id === r.c); if(!c) return null;
-  const u = compU(c, null, null, r.md); return { F, c, md: r.md, U: u.U, txt: `${c.lab}${r.md ? ` (${Math.round(r.md * 100)} cm)` : ''}` }; }
+/* Rénovation : un type d'origine non isolé (moellons, molasse, brique…) avec une année postérieure à son époque = rénové cette année-là.
+   Isolant ajouté (λ 0.035) dimensionné pour l'exigence « transformation » en vigueur, arrondi aux 2 cm supérieurs, 6 cm au minimum.
+   Exigences par élément pour les transformations : lois cantonales ~1985–1992, SIA 380/1:1988 / MoPEC 1992, SIA 380/1:2001, MoPEC 2008 / 2014. */
+const URENO = [[0, 0.50, 'pratique courante (pas d\'exigence)'], [1993, 0.40, 'SIA 380/1:1988 / MoPEC 1992'], [2002, 0.35, 'SIA 380/1:2001'], [2010, 0.25, 'MoPEC 2008 / SIA 380/1:2009'], [2017, 0.25, 'MoPEC 2014']];
+function famRes(k, id, y){ const F = (FAM[k] || []).find((x) => x.id === id); if(!F || !(y > 0)) return null;
+  const reno = F.orig && y > F.orig, r = F.f(reno ? F.orig : y), c = COMP.find((x) => x.id === r.c); if(!c) return null;
+  let iso = 0, law = null;
+  if(reno){ law = URENO.filter((q) => y >= q[0]).pop(); const R0 = compU(c, null, null, r.md).R, need = 1 / law[1] - R0;
+    iso = Math.max(6, Math.ceil(need * 0.035 * 100 / 2) * 2); }
+  const u = compU(c, null, iso, r.md);
+  return { F, c, md: r.md, iso, U: u.U, txt: `${c.lab}${r.md ? ` (${Math.round(r.md * 100)} cm)` : ''}${reno ? ` rénové ${y} : + ${iso} cm isolant (U ≤ ${fmt(law[1])}, ${law[2]})` : ''}` }; }
 function renderUcomp(){ const el = $('uc-comp'); if(el) el.innerHTML = ''; }
 // applique le type aux éléments du groupe : valeurs automatiques seulement (une valeur U tapée à la main est conservée)
 function applyFam(k){
@@ -5288,7 +5298,7 @@ function applyFam(k){
   DC.lines.forEach((l) => { if(COMPK(l) !== k || (k === 'mur' && !/^Mur extérieur|^Façade ventilée/.test(l.type))) return;
     const o = L[l.lk] = L[l.lk] || {}; if(o.U != null && !o.src) return; if(o.comp && !o.fam) return;   // saisie manuelle ou composition choisie ligne par ligne
     if(!id){ if(o.fam){ delete o.comp; delete o.md; delete o.fam; delete o.U; delete o.src; } return; }
-    const fr = famRes(k, id, uy[FAMY[k]]); if(!fr) return; delete o.ep; delete o.iso; o.comp = fr.c.id; o.md = fr.md; o.fam = id; compApply(o); o.src = `${fr.F.lab}, année ${uy[FAMY[k]]} → ${o.src}`; n++; });
+    const fr = famRes(k, id, uy[FAMY[k]]); if(!fr) return; delete o.ep; delete o.iso; o.comp = fr.c.id; o.md = fr.md; o.fam = id; if(fr.iso) o.iso = fr.iso; compApply(o); o.src = `${fr.F.lab}, année ${uy[FAMY[k]]} → ${o.src}`; n++; });
   return n; }
 const UPER = [['M0', 'avant 1919'], ['M1', '1919–1945'], ['M2', '1946–1960'], ['M3', '1961–1970'], ['M4', '1971–1980'], ['M5', '1981–1990'], ['M6', '1991–2000'], ['M7', '2001–2010'], ['M8', '2011–2015'], ['M9', 'dès 2016']];
 const UTYPO = ['Maçonnerie pleine (moellons, pierre), pas d\'isolant ; simple vitrage ou doubles fenêtres', 'Maçonnerie pleine ~40 cm, pas d\'isolant ; simple vitrage ou doubles fenêtres',
@@ -5344,7 +5354,7 @@ function renderUcat(){
   const uf = t.ufam = t.ufam || {};
   const famSel = (k, lab) => `<label>${lab}<select data-uf="${k}" style="max-width:220px"><option value="">type (catalogue par époque)</option>${FAM[k].map((x) => `<option value="${x.id}"${uf[k] === x.id ? ' selected' : ''}>${esc(x.lab)}</option>`).join('')}</select>${(() => { const r = famRes(k, uf[k], uy[FAMY[k]]); return r ? `<span class="note">U ${fmt(r.U)} · ${esc(r.txt)}</span>` : ''; })()}</label>`;
   $('uc-sel').innerHTML = Object.entries(UGRP).map(([g, lab]) => `<label>${lab}<input type="number" min="1800" max="2030" step="1" data-ug="${g}" value="${uy[g] || ''}" placeholder="année" style="width:110px"><span class="note">${prev(g)}</span></label>`).join('')
-    + `<div class="row" style="flex-wrap:wrap;gap:8px 14px;width:100%"><span class="note" style="width:100%">Type de construction (facultatif, plus précis) : avec l'année du groupe — construction ou dernière rénovation — il donne la composition et l'épaisseur d'isolant de l'époque. Détail ligne par ligne dans le tableau.</span>${famSel('mur', 'Murs')}${famSel('toit', 'Toit')}${famSel('plaf', 'Plafond combles')}${famSel('sol', 'Sol')}</div>`;
+    + `<div class="row" style="flex-wrap:wrap;gap:8px 14px;width:100%"><span class="note" style="width:100%">Type de construction d'origine (facultatif, plus précis) + année du groupe. Année de construction → composition de l'époque ; année plus récente que l'époque du type (p. ex. moellons 2000) → rénovation : isolant ajouté selon l'exigence de cette année-là. Détail ligne par ligne dans le tableau.</span>${famSel('mur', 'Murs')}${famSel('toit', 'Toit')}${famSel('plaf', 'Plafond combles')}${famSel('sol', 'Sol')}</div>`;
   $('uc-src').textContent = d ? `Année proposée : ${d.y} (${d.src}). Mettez l'année de rénovation par groupe si les murs, le toit ou les fenêtres ont été refaits.` : 'Année de construction inconnue (RegBL) : saisissez-la.';
   const yrs = []; for(let y = 1900; y <= 2020; y += 5) yrs.push(y);
   const ks = ['murExt', 'murTer', 'toit', 'plafNC', 'solTer', 'solNC', 'fen', 'fenG', 'porte'], on = new Set(Object.values(uy).filter((y) => y > 0).map((y) => Math.round(y / 5) * 5));
@@ -5357,7 +5367,7 @@ function ucatFill(all){
   DC.lines.forEach((l) => { const [g, k] = ucatOf(l), y = uy[g]; if(!(y > 0)){ miss.push(UGRP[g]); return; }
     const o = L[l.lk] = L[l.lk] || {}; if(!all && o.U != null) return; if(o.comp && !all) return; delete o.comp; delete o.ep; delete o.iso; delete o.md; delete o.fam;
     const ck = COMPK(l), fr = (t.ufam || {})[ck] && !(ck === 'mur' && !/^Mur extérieur|^Façade ventilée/.test(l.type)) ? famRes(ck, t.ufam[ck], uy[FAMY[ck]]) : null;
-    if(fr){ o.comp = fr.c.id; if(fr.md) o.md = fr.md; o.fam = fr.F.id; compApply(o); o.src = `${fr.F.lab}, année ${uy[FAMY[ck]]} → ${o.src}`; n++; return; }
+    if(fr){ o.comp = fr.c.id; if(fr.md) o.md = fr.md; o.fam = fr.F.id; if(fr.iso) o.iso = fr.iso; compApply(o); o.src = `${fr.F.lab}, année ${uy[FAMY[ck]]} → ${o.src}`; n++; return; }
     o.U = uAt(k, y); const p = perOf(y);
     const lw = uLaw(k, y), capped = lw && lw.v < uAt0(k, y);
     o.src = `${UCAT[k].lab}, année ${y} (période ${UPER[p][1]}${UCAT[k].r ? ', fourchette ' + UCAT[k].r[p] : ''}) — ${UCAT[k].src}${capped ? ` — limité à ${fmt(lw.v)} : ${lw.L.lab} (en vigueur dès ${lw.L.y})` : ''}`; n++; });
