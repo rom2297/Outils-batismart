@@ -330,6 +330,7 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
         <label class="note" style="display:inline-flex;gap:4px;align-items:center" title="En posant une coupe verticale : la poser aussi sur la façade d'en face, au même alignement, et couper la toiture et les planchers entre les deux"><input type="checkbox" id="d3-vpair" checked> en face + toiture</label>
         <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
+        <button type="button" class="ghost sm" id="d3-pdf" title="PDF : une page par façade (élévation colorée à l'échelle + légende) et la vue 3D">⎙ Façades PDF</button>
         <button type="button" class="ghost sm" id="d3-max" title="Agrandir la vue 3D à toute la fenêtre (Échap pour revenir)">⛶ Plein écran</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
         <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
@@ -4600,10 +4601,11 @@ function drawDecomp(g, DC, P, b, res, ink){
     const on = G.keys.some((k) => sel.has(k)), geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(G.tris.flat(), 3)); geo.computeVertexNormals();
     const c = new THREE.Color(G.col); if(on) c.lerp(acc, 0.45);
-    g.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
+    const mm = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+    mm.userData.el = 1; mm.userData.col = G.col; g.add(mm);
     // arêtes : seulement les vrais angles (> 20°) et le contour, pas les jonctions entre morceaux coplanaires
     const mg = THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeVertices ? THREE.BufferGeometryUtils.mergeVertices(geo, 1e-3) : geo;
-    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(mg, 20), new THREE.LineBasicMaterial({ color: on ? acc : ink, transparent: true, opacity: on ? 1 : 0.6 })));
+    const ls = new THREE.LineSegments(new THREE.EdgesGeometry(mg, 20), new THREE.LineBasicMaterial({ color: on ? acc : ink, transparent: true, opacity: on ? 1 : 0.6 })); ls.userData.el = 2; g.add(ls);
   });
   const tri2 = (poly, map) => { const out = []; poly.forEach((pg) => {
     const rings = pg.map((r) => { const q = r.slice(); if(q.length > 1 && q[0][0] === q[q.length - 1][0] && q[0][1] === q[q.length - 1][1]) q.pop(); return q.map(([x, y]) => new THREE.Vector2(x, y)); });
@@ -5403,6 +5405,89 @@ $('d3-wmode').onclick = () => setWinMode(!(T3 && T3.winMode));
 // vue 3D en plein écran (plein fenêtre)
 function set3DMax(on){ const sec = $('t-3d'); sec.classList.toggle('maxi', on); document.body.classList.toggle('noscroll', on); $('d3-max').textContent = on ? '✕ Réduire' : '⛶ Plein écran'; setTimeout(() => { resize3D(); if(T3) T3.render(); }, 30); }
 $('d3-max').onclick = () => set3DMax(!$('t-3d').classList.contains('maxi'));
+// ============================================================ PDF des façades : élévations colorées (comme la 3D) + légende
+function loadScript(src){ return new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('chargement impossible : ' + src)); document.head.appendChild(s); }); }
+async function exportFacadesPDF(){
+  if(!S.res){ status('Analysez d\'abord un bâtiment.', true); return; }
+  status('PDF des façades…');
+  if(!window.jspdf) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+  const prevView = T3 && T3.view; if(!T3) init3D(); if(T3.view === 'ori'){ T3.view = 'cecb'; } build3D(); S.v3dDirty = false;
+  const res = S.res, DC = T3.dc, g = T3.group, sc = T3.sc;
+  const shot3D = (() => { T3.render(); try { return T3.r.domElement.toDataURL('image/png'); } catch(e){ return null; } })();
+  const shotW = T3.r.domElement.width, shotH = T3.r.domElement.height;
+  const vis = g.children.map((o) => o.visible), bg = sc.background;
+  g.children.forEach((o) => { o.visible = !!(o.userData.el || o.userData.win); });
+  // élévations en aplats : exactement les couleurs de la légende
+  const mats = []; g.children.forEach((o) => { if(o.userData.el === 1 && o.userData.col){ mats.push([o, o.material]); o.material = new THREE.MeshBasicMaterial({ color: new THREE.Color(o.userData.col), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }); } });
+  sc.background = new THREE.Color('#ffffff');
+  const box = new THREE.Box3(); g.children.forEach((o) => { if(o.visible && o.userData.el === 1) box.expandByObject(o); });
+  const rr = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); rr.localClippingEnabled = true; rr.setPixelRatio(1);
+  const oris = [];
+  res.edges.forEach((e) => { let o = oris.find((x) => x.ori === e.orientation); if(!o){ o = { ori: e.orientation, L: 0, n: [0, 0] }; oris.push(o); } o.L += e.L; o.n[0] += e.n[0] * e.L; o.n[1] += e.n[1] * e.L; });
+  const F = oris.filter((o) => o.L >= 1).sort((a, c) => C.SECTORS.indexOf(a.ori) - C.SECTORS.indexOf(c.ori));
+  const { jsPDF } = window.jspdf, doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const today = new Date().toLocaleDateString('fr-CH'), lab = (S.meta && S.meta.label) || (S.sel && S.sel.label) || '', eg = S.meta && S.meta.egid ? `EGID ${S.meta.egid}` : '';
+  const W1252 = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
+  const tx = (t) => String(t).replace(/≤/g, '<=').replace(/≥/g, '>=').replace(/[\u2009\u202f]/g, ' ').replace(/[^\x00-\xff]/g, (c) => W1252.includes(c) ? c : '?');
+  const txt = (t, x, y, o) => { const s2 = tx(t); if(!/m²/.test(s2) || (o && o.angle)){ doc.text(s2.replace(/²/g, '2'), x, y, o); return; }
+    // « m² » : exposant dessiné à part (police standard)
+    const parts = s2.split('²'), fs = doc.getFontSize(); let w = 0; parts.forEach((p, i) => { w += doc.getTextWidth(p); if(i < parts.length - 1) w += doc.getTextWidth('2') * 0.65; });
+    let cx = o && o.align === 'right' ? x - w : o && o.align === 'center' ? x - w / 2 : x;
+    parts.forEach((p, i) => { doc.text(p, cx, y); cx += doc.getTextWidth(p); if(i < parts.length - 1){ doc.setFontSize(fs * 0.65); doc.text('2', cx, y - fs * 0.13); cx += doc.getTextWidth('2'); doc.setFontSize(fs); } }); };
+  const hexRGB = (h) => { const c = new THREE.Color(h); return [Math.round(c.r * 255), Math.round(c.g * 255), Math.round(c.b * 255)]; };
+  const head = (t) => { doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(20); txt(t, 12, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90); txt([lab, eg].filter(Boolean).join(' · '), 12, 20); txt(today, 285, 14, { align: 'right' });
+    doc.setDrawColor(200); doc.line(12, 23, 285, 23); };
+  const legend = (items, x0, y0) => { let y = y0; doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20); txt('Légende', x0, y); y += 6;
+    items.forEach((it) => { if(y > 196) return; doc.setFillColor(...hexRGB(it.col)); doc.setDrawColor(120); doc.rect(x0, y - 3.4, 6, 4.2, 'FD');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(20); txt(it.code || '', x0 + 8, y);
+      doc.setFont('helvetica', 'normal'); const nm = doc.splitTextToSize(tx(it.name), it.code ? 36 : 47); doc.text(nm, x0 + 8 + (it.code ? 11 : 0), y);
+      doc.setTextColor(70); txt(it.area, 286, y, { align: 'right' }); y += 4.2 * nm.length + 2.2; }); };
+  const net = (l) => `${fmt(l.net, 1)} m²`;
+  const angOf = (o) => C.SECTORS.indexOf(o) * 45;
+  // page 1 : vue 3D + légende complète
+  head('Enveloppe — vue 3D');
+  if(shot3D){ const k = Math.min(193 / shotW, 168 / shotH); doc.addImage(shot3D, 'PNG', 12, 27, shotW * k, shotH * k); }
+  legend(DC.lines.map((l) => ({ col: l.col, code: l.code, name: l.name, area: net(l) })), 212, 32);
+  // une page par façade
+  F.forEach((o) => {
+    const m = Math.hypot(...o.n) || 1, nx = o.n[0] / m, ny = o.n[1] / m, dir = new THREE.Vector3(nx, 0, -ny), up = new THREE.Vector3(0, 1, 0), right = new THREE.Vector3().crossVectors(up, dir).normalize();
+    const cs = []; for(const x of [box.min.x, box.max.x]) for(const y of [box.min.y, box.max.y]) for(const z of [box.min.z, box.max.z]) cs.push(new THREE.Vector3(x, y, z));
+    const us = cs.map((c) => c.dot(right)), vs = cs.map((c) => c.y), ds = cs.map((c) => c.dot(dir));
+    const u0 = Math.min(...us), u1 = Math.max(...us), v0 = Math.min(...vs), v1 = Math.max(...vs), Wm = u1 - u0, Hm = v1 - v0, mg = 0.3;
+    const ctr = new THREE.Vector3().addScaledVector(right, (u0 + u1) / 2).addScaledVector(up, (v0 + v1) / 2), D = Math.max(...ds) + 20;
+    const cam = new THREE.OrthographicCamera(-(Wm / 2 + mg), Wm / 2 + mg, Hm / 2 + mg, -(Hm / 2 + mg), 0.1, D + Math.max(...ds.map((d) => -d)) + 40);
+    cam.position.copy(ctr).addScaledVector(dir, D); cam.up.copy(up); cam.lookAt(ctr); cam.updateProjectionMatrix();
+    const ppm = Math.min(80, 2800 / (Wm + 2 * mg)), pw = Math.round((Wm + 2 * mg) * ppm), ph = Math.round((Hm + 2 * mg) * ppm);
+    rr.setSize(pw, ph, false); rr.render(sc, cam); const img = rr.domElement.toDataURL('image/png');
+    doc.addPage('a4', 'landscape'); head(`Façade ${o.ori}`);
+    const den = [50, 100, 200, 250, 500, 1000, 2000].find((d) => (Wm + 2 * mg) * 1000 / d <= 190 && (Hm + 2 * mg) * 1000 / d <= 150) || 2000, mm = 1000 / den;
+    const iw = (Wm + 2 * mg) * mm, ih = (Hm + 2 * mg) * mm, x0 = 18 + (190 - iw) / 2, y0 = 30 + (150 - ih) / 2;
+    doc.addImage(img, 'PNG', x0, y0, iw, ih);
+    // cotes : largeur et hauteur hors tout
+    doc.setDrawColor(60); doc.setTextColor(40); doc.setFontSize(8);
+    const bx0 = x0 + mg * mm, bx1 = x0 + iw - mg * mm, by0 = y0 + mg * mm, by1 = y0 + ih - mg * mm, yc = by1 + 6;
+    doc.line(bx0, yc, bx1, yc); [bx0, bx1].forEach((x) => doc.line(x - 1, yc + 1, x + 1, yc - 1)); txt(`${fmt(Wm, 2)} m`, (bx0 + bx1) / 2, yc - 1.2, { align: 'center' });
+    const xc = bx0 - 6; doc.line(xc, by0, xc, by1); [by0, by1].forEach((y) => doc.line(xc - 1, y + 1, xc + 1, y - 1)); txt(`${fmt(Hm, 2)} m`, xc - 1.2, (by0 + by1) / 2, { angle: 90, align: 'center' });
+    // barre d'échelle
+    const sb = [1, 2, 5, 10, 20, 50].find((q) => q * mm >= 18) || 50, sy = 196; doc.setFillColor(40);
+    for(let k = 0; k < 2; k++){ if(k % 2 === 0) doc.rect(12 + k * sb * mm / 2, sy, sb * mm / 2, 1.6, 'F'); else doc.rect(12 + k * sb * mm / 2, sy, sb * mm / 2, 1.6, 'S'); }
+    doc.setFontSize(8); txt(`0`, 12, sy - 1); txt(`${sb} m`, 12 + sb * mm, sy - 1, { align: 'center' });
+    txt(`Échelle 1:${den} (A4, imprimer sans mise à l'échelle) · vue depuis l'extérieur`, 12 + sb * mm + 8, sy + 1.5);
+    // légende : murs de cette orientation, toitures visibles depuis ce côté, ouvertures
+    const it = DC.lines.filter((l) => (l.kind === 'mur' && l.orientation === o.ori) || (l.kind === 'toit' && C.SECTORS.includes(l.orientation) && Math.abs(((angOf(l.orientation) - angOf(o.ori) + 540) % 360) - 180) < 90))
+      .map((l) => ({ col: l.col, code: l.code, name: l.name, area: net(l) }));
+    const ws = DC.wins.filter((w) => w.f.facade === o.ori && w.f.l > 0 && w.f.h > 0); if(ws.length){ const n = ws.reduce((s2, w) => s2 + (w.f.nombre || 1), 0), a = ws.reduce((s2, w) => s2 + (w.f.nombre || 1) * w.f.l * w.f.h, 0);
+      it.push({ col: '#cfeaff', code: '', name: `Fenêtres / portes : ${n} pce`, area: `${fmt(a, 1)} m²` }); }
+    legend(it, 212, 32);
+  });
+  rr.dispose(); mats.forEach(([o, m]) => { o.material.dispose(); o.material = m; }); g.children.forEach((o, i) => { o.visible = vis[i]; }); sc.background = bg;
+  if(prevView === 'ori'){ T3.view = 'ori'; build3D(); } T3.render();
+  doc.setProperties({ title: 'Façades ' + lab });
+  save(doc.output('blob'), `Facades_${slugOf(lab)}.pdf`);
+  status(`PDF des façades : ${F.length} façade(s) + vue 3D.`);
+}
+$('d3-pdf').onclick = () => exportFacadesPDF().catch((ex) => status('PDF : ' + ex.message, true));
 document.addEventListener('keydown', (e) => { if(e.key !== 'Escape' || !$('t-3d').classList.contains('maxi')) return; if(T3 && (T3.cutMode || T3.winMode || T3.cutSel || T3.wsel || T3.drag)) return; set3DMax(false); });
 
 // ============================================================ noms des parties : liste déroulante
