@@ -1006,14 +1006,14 @@ body.noscroll{overflow:hidden}
       const xs = t.map((p) => p[0]), ys = t.map((p) => p[1]); let a = null, c = null, dmax = -1;
       t.forEach((p) => t.forEach((q2) => { const d = L(p, q2); if (d > dmax) { dmax = d; a = p; c = q2; } }));
       if (dmax < 1e-3) return; const ux = (c[0] - a[0]) / dmax, uy = (c[1] - a[1]) / dmax, nx = -uy, ny = ux;
-      const k = Math.max(4, Math.ceil(dmax / 0.05)); let inside = 0, firstOut = -1, lastOut = -1;
-      for (let j = 0; j <= k; j++) { const s2 = dmax * j / k, x = a[0] + ux * s2, y = a[1] + uy * s2; if (inGone(x + nx * 0.02, y + ny * 0.02) || inGone(x - nx * 0.02, y - ny * 0.02) || inGone(x, y)) { inside++; if (firstOut < 0) firstOut = j; lastOut = j; } }
+      const k = Math.max(4, Math.ceil(dmax / 0.05)), runs = []; let inside = 0, cur = null;
+      for (let j = 0; j <= k; j++) { const s2 = dmax * j / k, x = a[0] + ux * s2, y = a[1] + uy * s2, g2 = inGone(x + nx * 0.02, y + ny * 0.02) || inGone(x - nx * 0.02, y - ny * 0.02) || inGone(x, y);
+        if (g2) { inside++; cur = null; } else { if (!cur) { cur = [s2, s2]; runs.push(cur); } cur[1] = s2; } }
       if (!inside) { faces.push(t); return; }
-      if (inside > 0.9 * (k + 1)) return;                                                // face entièrement dans l'appendice
-      // partie restante : coupe à la frontière (paramètre s) dans le plan de la face
-      const s0 = dmax * firstOut / k, s1 = dmax * lastOut / k, keepLo = firstOut > 0 ? [0, s0] : null, keepHi = lastOut < k ? [s1, dmax] : null;
+      // parties restantes (hors appendice), coupées dans le plan de la face ; bords prolongés d'un demi-pas
+      const hs = dmax / k / 2, keep = runs.map(([lo, hi]) => [lo > 0 ? lo - hs : 0, hi < dmax ? hi + hs : dmax]);
       const sOf = (p) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy, poly2 = t.map((p) => [sOf(p), p[2]]);
-      [keepLo, keepHi].filter(Boolean).forEach(([lo, hi]) => { if (hi - lo < 0.1) return; const zs = poly2.map((p) => p[1]), z0 = Math.min(...zs) - 1, z1 = Math.max(...zs) + 1;
+      keep.forEach(([lo, hi]) => { if (hi - lo < 0.1) return; const zs = poly2.map((p) => p[1]), z0 = Math.min(...zs) - 1, z1 = Math.max(...zs) + 1;
         let q; try { q = PC.intersection([[...poly2, poly2[0]]], [[[lo, z0], [hi, z0], [hi, z1], [lo, z1], [lo, z0]]]); } catch (e) { return; }
         q.forEach((pg) => { const r = openRing(pg[0]); if (r.length >= 3) faces.push(r.map(([s3, z]) => [a[0] + ux * s3, a[1] + uy * s3, z])); }); }); });
     clipFaces(b0.faces, faces); const walls = []; clipFaces(b0.walls || [], walls);
