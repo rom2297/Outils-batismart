@@ -2344,10 +2344,14 @@ async function getTile(){
     const c=[]; (j.features||[]).forEach(f=>{
       const m=/_(\d{4})_(\d{4}-\d{2})$/.exec(f.id||''); const bb=f.bbox||[0,0,0,0];
       if(!m || (bb[2]-bb[0])>0.2 || (bb[3]-bb[1])>0.2) return;
-      Object.values(f.assets||{}).forEach(a=>{ if(/\.gdb\.zip$/i.test(a.href||'')) c.push([m[1], a.href]); });
+      // profondeur du point dans l'emprise de la tuile (négative = point hors tuile, attrapé par la marge de recherche)
+      const depth=Math.min(lon-bb[0], bb[2]-lon, lat-bb[1], bb[3]-lat);
+      Object.values(f.assets||{}).forEach(a=>{ if(/\.gdb\.zip$/i.test(a.href||'')) c.push([m[1], a.href, depth]); });
     });
-    c.sort((a,b)=>a[0]<b[0]?-1:1);
-    if(c.length){ href=c[c.length-1][1]; name=href.split('/').pop(); }
+    // tuile qui contient vraiment le point d'abord (au bord d'une tuile, la recherche renvoie aussi la voisine), puis la plus récente
+    c.sort((a,b)=>((b[2]>=0)-(a[2]>=0)) || (a[0]<b[0]?1:a[0]>b[0]?-1:0) || b[2]-a[2]);
+    S.tileCands = c.map(x=>({href:x[1], name:x[1].split('/').pop(), year:x[0]}));
+    if(c.length){ href=c[0][1]; name=href.split('/').pop(); }
     showTileLink(href, name, E, N);
   }catch(ex){ status(`Catalogue swisstopo inaccessible (${ex.message}) : passage en mode manuel.`, true); }
   if(!href){ showTileLink(null, null, E, N); return manualTile(`Tuile introuvable automatiquement. Sur la page swisstopo, choisissez la sélection par coordonnées (${fmt(E,0)} / ${fmt(N,0)}), format ESRI File Geodatabase, puis déposez le fichier ci-dessous.`, DL_PAGE, 'Ouvrir la page swisstopo'); }
@@ -2409,6 +2413,10 @@ async function openTile(file){
     if(!S.sel){ status('Tuile chargée. Cherchez maintenant l\'adresse.'); return; }
     if(S.tileExtent && !inExtent(S.sel.E,S.sel.N)){
       const e=S.tileExtent; S.ds=null;
+      const id=(file.name||'').replace(/.*?(\d{4}-\d{2}).*/,'$1'), alt=(S.tileCands||[]).find(t=>!t.name.includes(id));
+      if(alt){ step('gdal',null); showTileLink(alt.href, alt.name, S.sel.E, S.sel.N);
+        manualTile(`Cette tuile (${id}) s'arrête à E ${fmt(e[2],0)} / N ${fmt(e[3],0)} : le bâtiment est juste à côté, dans la tuile voisine ${alt.name}. Cliquez sur le bouton puis déposez-la ci-dessous.`, alt.href, 'Télécharger la tuile voisine');
+        status('Tuile voisine nécessaire : '+alt.name, true); return; }
       throw new Error(`le bâtiment (E ${fmt(S.sel.E,0)} / N ${fmt(S.sel.N,0)}) est hors de cette tuile (E ${fmt(e[0],0)}–${fmt(e[2],0)}, N ${fmt(e[1],0)}–${fmt(e[3],0)}). Il faut la tuile voisine.`);
     }
     await run();
