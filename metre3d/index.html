@@ -998,8 +998,12 @@ body.noscroll{overflow:hidden}
     let gone; try { gone = PC.difference([cl(fp0)], [cl(fp)]); } catch (e) { return null; }
     const goneA = gone.reduce((a, pg) => a + Math.abs(ringArea(openRing(pg[0]))), 0); if (goneA < 0.01) return null;
     const inGone = (x, y) => gone.some((pg) => pointInRing(x, y, openRing(pg[0])) && !pg.slice(1).some((h) => pointInRing(x, y, openRing(h))));
-    const faces = [], clipFaces = (src, faces) => src.forEach((t) => { const nv = newell(t), m = norm(nv); if (m < 1e-9) return;
-      if (Math.abs(nv[2]) / m >= 0.05) {                                                  // face non verticale : différence en plan
+    const BOT = bottomFaces(b0), faces = [], clipFaces = (src, faces) => src.forEach((t) => { const nv = newell(t), m = norm(nv); if (m < 1e-9) return;
+      if (Math.abs(nv[2]) / m >= 0.05) {                                                  // face non verticale
+        // toiture qui déborde au-dessus de l'appendice : gardée telle quelle (sinon entaille dans l'avant-toit) ;
+        // dalle du bas et dessus propre de l'appendice : retirés de l'appendice
+        if (src === b0.faces && !BOT.has(src.indexOf(t))) { let gi = 0; try { gi = PC.intersection([cl(t)], gone).reduce((a2, pg) => a2 + Math.abs(ringArea(openRing(pg[0]))), 0); } catch (e) { }
+          if (gi < 0.5 * Math.abs(ringArea(t))) { faces.push(t); } return; }
         let q; try { q = PC.difference([cl(t)], gone); } catch (e) { faces.push(t); return; }
         const p0 = t[0]; q.forEach((pg) => { const r = openRing(pg[0]); if (Math.abs(ringArea(r)) < 1e-4) return; faces.push(r.map(([x, y]) => [x, y, p0[2] - (nv[0] * (x - p0[0]) + nv[1] * (y - p0[1])) / nv[2]])); }); return; }
       // face verticale : on garde la partie hors de l'appendice (échantillonnage le long de sa base)
@@ -1028,11 +1032,16 @@ body.noscroll{overflow:hidden}
     const onOld = (x, y) => fp0.some((a, i) => { const c = fp0[(i + 1) % fp0.length], dx = c[0] - a[0], dy = c[1] - a[1], l2 = dx * dx + dy * dy || 1, u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)); return Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy) < 0.03; });
     for (let i = 0; i < fp.length; i++) { const a = fp[i], c = fp[(i + 1) % fp.length], Lc = L(a, c); if (Lc < 0.02) continue;
       const ux = (c[0] - a[0]) / Lc, uy = (c[1] - a[1]) / Lc, nx = uy, ny = -ux;                  // CCW : extérieur à droite
-      const k = Math.max(2, Math.ceil(Lc / 0.1)), seg = []; let cur = null;
-      for (let j = 0; j <= k; j++) { const s2 = Lc * j / k, x = a[0] + ux * s2, y = a[1] + uy * s2; const nw = !onOld(x, y);
-        if (nw) { const zs = zsAt(x - nx * 0.05, y - ny * 0.05); const zt = zs.length ? Math.max(...zs) : null, zb = zs.length ? Math.min(...zs) : null; if (zt == null) { cur = null; continue; }
-          if (!cur) { cur = []; seg.push(cur); } cur.push([x, y, zb, zt]); } else cur = null; }
-      seg.forEach((q) => { if (q.length < 2 || L(q[0], q[q.length - 1]) < 0.02) return;
+      // portions nouvelles du côté (pas fin), étendues jusqu'aux angles voisins
+      const st = 0.01, K = Math.max(2, Math.ceil(Lc / st)), runs = []; let rc = null;
+      for (let j = 0; j <= K; j++) { const s2 = Lc * j / K; if (!onOld(a[0] + ux * s2, a[1] + uy * s2)) { if (!rc) { rc = [s2, s2]; runs.push(rc); } rc[1] = s2; } else rc = null; }
+      runs.forEach(([r0, r1]) => { r0 = Math.max(0, r0 - 0.04); r1 = Math.min(Lc, r1 + 0.04); if (r1 - r0 < 0.02) return;
+        const kk = Math.max(2, Math.ceil((r1 - r0) / 0.1)), q = [];
+        for (let j = 0; j <= kk; j++) { const s2 = r0 + (r1 - r0) * j / kk, x = a[0] + ux * s2, y = a[1] + uy * s2;
+          let zs = []; for (const d of [0.05, 0.15, 0.3]) { zs = zsAt(x - nx * d, y - ny * d); if (zs.length) break; } const zt = zs.length ? Math.max(...zs) : null; q.push([x, y, b0.zbottom, zt]); }
+        // pas de toit trouvé juste derrière (angle) : hauteur du point voisin
+        let lz = q.find((p) => p[3] != null); if (!lz) return; q.forEach((p) => { if (p[3] == null) p[3] = lz[3]; else lz = p; });
+        if (q.length < 2) return;
         const w = [...q.map((p) => [p[0], p[1], p[2]]), ...q.slice().reverse().map((p) => [p[0], p[1], p[3]])]; faces.push(w); if (walls.length) walls.push(w); }); }
     const kept = Object.assign({}, b0, { faces, walls, __root: b0.__root || b0, nubs: { n: n0, area: goneA } });
     delete kept.__bottom; computeFootprint(kept);
