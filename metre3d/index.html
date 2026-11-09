@@ -971,6 +971,73 @@ body.noscroll{overflow:hidden}
     faces.push(fp.slice().reverse().map((p) => [p[0], p[1], zb]));
     return faces;
   }
+  /* Petits appendices du modèle (« oreilles » de 20–50 cm au coin d'une façade : mur mitoyen ou pignon qui dépasse, artefact de
+     modélisation) : emprise redressée en prolongeant les deux grands côtés voisins, faces du solide retirées de l'appendice,
+     mur refermé le long du nouveau côté. Rend un nouveau bâtiment, ou null s'il n'y a rien à nettoyer. */
+  function cleanNubs(b0, opt = {}) {
+    const fp0 = b0.footprint; if (!fp0 || fp0.length < 6) return null;
+    const short = opt.short || 1.2, thin = opt.thin || 0.5, maxA = opt.maxA || 1.5;
+    let fp = fp0.map((p) => [p[0], p[1]]); if (ringArea(fp) < 0) fp.reverse();
+    const L = (a, c) => Math.hypot(c[0] - a[0], c[1] - a[1]);
+    const X = (a, b2, c, d) => { const r = [b2[0] - a[0], b2[1] - a[1]], q = [d[0] - c[0], d[1] - c[1]], cr = r[0] * q[1] - r[1] * q[0]; if (Math.abs(cr) < 1e-9) return null;
+      const t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / cr; return [a[0] + r[0] * t, a[1] + r[1] * t]; };
+    let n0 = 0;
+    for (let it = 0, ch = true; ch && it < 20 && fp.length > 4; it++) { ch = false; const n = fp.length;
+      for (let i = 0; i < n; i++) {
+        const P = fp[(i - 1 + n) % n], Q = fp[i], R = fp[(i + 1) % n], S2 = fp[(i + 2) % n], T = fp[(i + 3) % n];
+        const e1 = L(Q, R), e2 = L(R, S2); if (e1 > short || e2 > short || Math.min(e1, e2) > thin) continue;
+        if (L(P, Q) < 2 * short || L(S2, T) < 2 * short) continue;                      // deux grands côtés de part et d'autre
+        const Xp = X(P, Q, S2, T); if (!Xp || L(Xp, R) > 1.5) continue;
+        const A = Math.abs(ringArea([Q, R, S2, Xp])); if (A > maxA) continue;
+        // appendice saillant seulement (on retire de la surface, on n'en ajoute pas)
+        const skip = new Set([i, (i + 1) % n, (i + 2) % n]), nf = []; for (let k = 0; k < n; k++) { if (k === i) nf.push(Xp); if (!skip.has(k)) nf.push(fp[k]); }
+        if (Math.abs(ringArea(nf)) > Math.abs(ringArea(fp)) + 0.05) continue;
+        fp = nf; n0++; ch = true; break; } }
+    if (!n0) return null;
+    const cl = (r) => [...r.map((p) => [p[0], p[1]]), [r[0][0], r[0][1]]];
+    let gone; try { gone = PC.difference([cl(fp0)], [cl(fp)]); } catch (e) { return null; }
+    const goneA = gone.reduce((a, pg) => a + Math.abs(ringArea(openRing(pg[0]))), 0); if (goneA < 0.01) return null;
+    const inGone = (x, y) => gone.some((pg) => pointInRing(x, y, openRing(pg[0])) && !pg.slice(1).some((h) => pointInRing(x, y, openRing(h))));
+    const faces = [], clipFaces = (src, faces) => src.forEach((t) => { const nv = newell(t), m = norm(nv); if (m < 1e-9) return;
+      if (Math.abs(nv[2]) / m >= 0.05) {                                                  // face non verticale : différence en plan
+        let q; try { q = PC.difference([cl(t)], gone); } catch (e) { faces.push(t); return; }
+        const p0 = t[0]; q.forEach((pg) => { const r = openRing(pg[0]); if (Math.abs(ringArea(r)) < 1e-4) return; faces.push(r.map(([x, y]) => [x, y, p0[2] - (nv[0] * (x - p0[0]) + nv[1] * (y - p0[1])) / nv[2]])); }); return; }
+      // face verticale : on garde la partie hors de l'appendice (échantillonnage le long de sa base)
+      const xs = t.map((p) => p[0]), ys = t.map((p) => p[1]); let a = null, c = null, dmax = -1;
+      t.forEach((p) => t.forEach((q2) => { const d = L(p, q2); if (d > dmax) { dmax = d; a = p; c = q2; } }));
+      if (dmax < 1e-3) return; const ux = (c[0] - a[0]) / dmax, uy = (c[1] - a[1]) / dmax, nx = -uy, ny = ux;
+      const k = Math.max(4, Math.ceil(dmax / 0.05)); let inside = 0, firstOut = -1, lastOut = -1;
+      for (let j = 0; j <= k; j++) { const s2 = dmax * j / k, x = a[0] + ux * s2, y = a[1] + uy * s2; if (inGone(x + nx * 0.02, y + ny * 0.02) || inGone(x - nx * 0.02, y - ny * 0.02) || inGone(x, y)) { inside++; if (firstOut < 0) firstOut = j; lastOut = j; } }
+      if (!inside) { faces.push(t); return; }
+      if (inside > 0.9 * (k + 1)) return;                                                // face entièrement dans l'appendice
+      // partie restante : coupe à la frontière (paramètre s) dans le plan de la face
+      const s0 = dmax * firstOut / k, s1 = dmax * lastOut / k, keepLo = firstOut > 0 ? [0, s0] : null, keepHi = lastOut < k ? [s1, dmax] : null;
+      const sOf = (p) => (p[0] - a[0]) * ux + (p[1] - a[1]) * uy, poly2 = t.map((p) => [sOf(p), p[2]]);
+      [keepLo, keepHi].filter(Boolean).forEach(([lo, hi]) => { if (hi - lo < 0.1) return; const zs = poly2.map((p) => p[1]), z0 = Math.min(...zs) - 1, z1 = Math.max(...zs) + 1;
+        let q; try { q = PC.intersection([[...poly2, poly2[0]]], [[[lo, z0], [hi, z0], [hi, z1], [lo, z1], [lo, z0]]]); } catch (e) { return; }
+        q.forEach((pg) => { const r = openRing(pg[0]); if (r.length >= 3) faces.push(r.map(([s3, z]) => [a[0] + ux * s3, a[1] + uy * s3, z])); }); }); });
+    clipFaces(b0.faces, faces); const walls = []; clipFaces(b0.walls || [], walls);
+    // restes de faces verticales hors de la nouvelle emprise ou posées sur un nouveau côté (refait ci-dessous)
+    const dFp = (x, y) => Math.min(...fp.map((a, i) => { const c = fp[(i + 1) % fp.length], dx = c[0] - a[0], dy = c[1] - a[1], l2 = dx * dx + dy * dy || 1, u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)); return Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy); }));
+    [faces, walls].forEach((FS) => { for (let i = FS.length - 1; i >= 0; i--) { const t = FS[i], nv = newell(t), m = norm(nv); if (m < 1e-9 || Math.abs(nv[2]) / m >= 0.05) continue;
+      const cx = t.reduce((a, p) => a + p[0], 0) / t.length, cy = t.reduce((a, p) => a + p[1], 0) / t.length;
+      if (!pointInRing(cx, cy, fp) && dFp(cx, cy) > 0.03 && gone.some((pg) => openRing(pg[0]).some((q) => Math.hypot(q[0] - cx, q[1] - cy) < 1.5))) FS.splice(i, 1); } });
+    // mur refermant l'appendice : nouveaux côtés de l'emprise, du bas jusqu'au dessus du solide
+    const H = faces.map((t) => { const nv = newell(t), m = norm(nv); if (m < 1e-9 || Math.abs(nv[2]) / m < 0.05) return null; return { t, n: nv, x0: Math.min(...t.map((p) => p[0])), x1: Math.max(...t.map((p) => p[0])), y0: Math.min(...t.map((p) => p[1])), y1: Math.max(...t.map((p) => p[1])) }; }).filter(Boolean);
+    const zsAt = (x, y) => { const zs = []; for (const h of H) { if (x < h.x0 || x > h.x1 || y < h.y0 || y > h.y1 || !pointInRing(x, y, h.t)) continue; zs.push(h.t[0][2] - (h.n[0] * (x - h.t[0][0]) + h.n[1] * (y - h.t[0][1])) / h.n[2]); } return zs; };
+    const onOld = (x, y) => fp0.some((a, i) => { const c = fp0[(i + 1) % fp0.length], dx = c[0] - a[0], dy = c[1] - a[1], l2 = dx * dx + dy * dy || 1, u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)); return Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy) < 0.03; });
+    for (let i = 0; i < fp.length; i++) { const a = fp[i], c = fp[(i + 1) % fp.length], Lc = L(a, c); if (Lc < 0.02) continue;
+      const ux = (c[0] - a[0]) / Lc, uy = (c[1] - a[1]) / Lc, nx = uy, ny = -ux;                  // CCW : extérieur à droite
+      const k = Math.max(2, Math.ceil(Lc / 0.1)), seg = []; let cur = null;
+      for (let j = 0; j <= k; j++) { const s2 = Lc * j / k, x = a[0] + ux * s2, y = a[1] + uy * s2; const nw = !onOld(x, y);
+        if (nw) { const zs = zsAt(x - nx * 0.05, y - ny * 0.05); const zt = zs.length ? Math.max(...zs) : null, zb = zs.length ? Math.min(...zs) : null; if (zt == null) { cur = null; continue; }
+          if (!cur) { cur = []; seg.push(cur); } cur.push([x, y, zb, zt]); } else cur = null; }
+      seg.forEach((q) => { if (q.length < 2 || L(q[0], q[q.length - 1]) < 0.02) return;
+        const w = [...q.map((p) => [p[0], p[1], p[2]]), ...q.slice().reverse().map((p) => [p[0], p[1], p[3]])]; faces.push(w); if (walls.length) walls.push(w); }); }
+    const kept = Object.assign({}, b0, { faces, walls, __root: b0.__root || b0, nubs: { n: n0, area: goneA } });
+    delete kept.__bottom; computeFootprint(kept);
+    return kept.footprint ? kept : null;
+  }
   /* Retrait (encoche) de l'emprise entre deux angles a et c : polygone formé par le côté de l'emprise qui sort du segment a–c.
      Rend la liste des sommets du retrait (fermé par a–c), ou null. */
   function pocketBetween(fp, a, c) {
@@ -1396,6 +1463,7 @@ body.noscroll{overflow:hidden}
     const h = [], groups = groupsOf(res), rb = meta.regbl || {};
     const fen = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && counted(f, extra));
     const fenOut = (extra.fenetres || []).filter((f) => f.l > 0 && f.h > 0 && !counted(f, extra));
+    if (b.nubs) h.push([`${b.nubs.n} petit(s) appendice(s) du modèle 3D supprimé(s) (${fmt(b.nubs.area, 2)} m² d'emprise, < 0.5 m de large : bout de mur mitoyen ou de pignon qui dépasse) : façades redressées.`, 'Case « garder les petits appendices » sous le plan (onglet 1) si c\'est un vrai volume', 'Faible']);
     if (b.extended) h.push([`Emprise complétée à la main (+${fmt(b.extended.add)} m² au sol) : toiture de la zone ajoutée lissée entre la toiture existante et l'égout des nouveaux côtés ; murs verticaux jusqu'à la toiture.`, 'Contrôler la hauteur et la forme du toit de la zone ajoutée (photo, plans)', 'Élevé']);
     if (res.rebuilt) h.push([`Modèle 3D swisstopo incohérent pour ce bâtiment (${res.rebuilt.bad} % des faces supérieures sous la toiture réelle) : volume reconstruit à partir de l'emprise et de la couche toiture (murs verticaux, lucarnes et décrochements de façade simplifiés).`, 'Contrôler hauteurs et surfaces de murs sur place ou sur plans', 'Élevé']);
     if (fenOut.length) h.push([`${fenOut.length} ouverture(s) du sous-sol non chauffé (${fmt(fenOut.reduce((s, f) => s + (f.nombre || 1) * f.l * f.h, 0))} m²) : hors enveloppe, non comptées.`, 'Confirmer que le sous-sol est hors enveloppe', 'Faible']);
@@ -1870,7 +1938,7 @@ body.noscroll{overflow:hidden}
   }
 
   const defB = (x) => (/^Mur extérieur|^Façade ventilée|^Toit|^Contre extérieur/.test(x.type) ? 1 : x.type === 'Contre chauffé' ? 0 : null);
-  const api = { pocketBetween, extendBuilding, prismFromRoof, roofPanOf, roofLinks, segHitsPan, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
+  const api = { cleanNubs, pocketBetween, extendBuilding, prismFromRoof, roofPanOf, roofLinks, segHitsPan, vcutsOf, edgeAt, edgeGrid, gableBase, nameKey, splitBuilding, splitBuildingPoly, computeFootprint, defB, bottomFaces, decompose, cecbLines, TYPES, OUT, counted, SECTORS, sector, sectorMargin, buildBuildings, pickBuilding, neighboursOf, analyse, groupsOf,
     buildHypotheses, fillWorkbook, regblParse, fmt, r2 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Metre3D = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -2479,6 +2547,7 @@ async function analyseBuilding(b, why, manual){
   const xt = S.extra.extend;
   const xps = xt && xt.uuid === b.props.UUID ? (xt.polys || (xt.poly ? [xt.poly] : [])) : [];
   if(xps.length){ const r = C.extendBuilding(b, xps, S.roofs); if(r) b = r; }
+  if(!S.extra.keepNubs){ const r = C.cleanNubs(b); if(r) b = r; }
   b = window.applyCorr ? window.applyCorr(b) : b;
   S.b=b; step('terrain','run'); status('Terrain par façade…');
   const useT = $('opt-terrain').checked;
@@ -2570,7 +2639,7 @@ function render(){
     <div><span>Ath / SRE</span><strong>${sre?fmt(Ath/sre):'—'}</strong></div></div>`;
   const rbA = rb && +rb.surface_sol, big = !b.splitPoly && !(b.splitLines||[]).length && ((rbA > 0 && b.fpArea > 1.8 * rbA) || (!rbA && b.fpArea > 600));
   h += `<div class="split"><div>${big ? `<div class="note" style="border-left:3px solid var(--crit-e,#c0392b);padding:4px 8px;margin-bottom:6px"><b>Volume 3D trop grand</b> : ${fmt(b.fpArea,0)} m² au sol${rbA > 0 ? ` pour ${fmt(rbA,0)} m² au RegBL` : ''}. Le modèle regroupe sans doute tout l'îlot (fréquent sur les anciennes tuiles, p. ex. Vaud) : utilisez <b>Tracer l'emprise du bâtiment</b> sur le fond cadastral.</div>` : ''}${planSVG(false)}<p class="note">Cliquez sur un bâtiment gris pour l'analyser à la place. Croix = point de l'adresse.</p>
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="emp-go" aria-pressed="${S.empMode?'true':'false'}" title="Le volume 3D couvre tout un îlot : tracez le contour du bâtiment sur le plan cadastral (clics sur les angles, accrochage aux angles du modèle 3D), on garde l'intérieur">▭ Tracer l'emprise du bâtiment</button><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Couper par une ligne</button><button type="button" class="ghost sm" id="emp-add" aria-pressed="${S.empMode&&S.empAdd?'true':'false'}" title="Fermer un retrait : 2 clics sur les angles de part et d&#39;autre + Entrée. Ajouter une partie manquante : tracez la zone. La toiture prolonge les pans voisins.">＋ Combler / agrandir</button>${S.extra.extend?`<button type="button" class="ghost sm" id="emp-add-undo">Annuler l'ajout</button>`:''}${(b.splitLines||[]).length||b.splitPoly?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<label class="note" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cad-on"${S.cadastre?' checked':''}> Fond cadastre</label><span class="note" id="sp-msg" style="flex-basis:100%"></span></div></div><div class="col">`;
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px"><button type="button" class="ghost sm" id="emp-go" aria-pressed="${S.empMode?'true':'false'}" title="Le volume 3D couvre tout un îlot : tracez le contour du bâtiment sur le plan cadastral (clics sur les angles, accrochage aux angles du modèle 3D), on garde l'intérieur">▭ Tracer l'emprise du bâtiment</button><button type="button" class="ghost sm" id="sp-go" title="Le volume 3D englobe aussi une autre adresse : tracez la limite (2 clics sur le plan), on garde le côté de la croix">✂ Couper par une ligne</button><label class="sm" title="Les petits bouts de mur (< 0.5 m de large) qui dépassent aux angles sont supprimés automatiquement ; cochez pour les garder" style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" id="keep-nubs" ${S.extra.keepNubs?'checked':''}> garder les petits appendices</label><button type="button" class="ghost sm" id="emp-add" aria-pressed="${S.empMode&&S.empAdd?'true':'false'}" title="Fermer un retrait : 2 clics sur les angles de part et d&#39;autre + Entrée. Ajouter une partie manquante : tracez la zone. La toiture prolonge les pans voisins.">＋ Combler / agrandir</button>${S.extra.extend?`<button type="button" class="ghost sm" id="emp-add-undo">Annuler l'ajout</button>`:''}${(b.splitLines||[]).length||b.splitPoly?`<button type="button" class="ghost sm" id="sp-undo">Annuler la séparation</button>`:''}<label class="note" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cad-on"${S.cadastre?' checked':''}> Fond cadastre</label><span class="note" id="sp-msg" style="flex-basis:100%"></span></div></div><div class="col">`;
   h += `<div><h2>Éléments CECB</h2><div class="tablewrap"><table><thead><tr><th>Code</th><th>Élément</th><th class="n">Net m²</th></tr></thead><tbody>` +
     L.map(x=>`<tr><td class="mono" style="white-space:nowrap">${x.code}</td><td>${esc(x.name.replace(' (3D)',''))}<div class="note">${esc(x.type)}</div></td><td class="n">${fmt(x.net)}</td></tr>`).join('') +
     `</tbody></table></div><p class="note">Ce sont les lignes exportées. Pour changer le type d'un mur ou d'un pan : onglet <b>4 Enveloppe 3D</b>. Fenêtres non saisies : onglet <b>3</b>.</p></div>`;
@@ -5561,7 +5630,7 @@ $('d3-lines').addEventListener('change', (e) => { const i = e.target.closest('se
    (clic relâché, champ modifié, touche, recalcul) s'il diffère du précédent. */
 const UNDO = { stack: [], redo: [], cur: null, busy: false };
 const undoState = () => JSON.stringify({ x: S.extra, m: S.plans.map((p) => p.measures.filter((m) => !m.tmp)) });
-const ANALYSIS_KEYS = ['split', 'extend', 'corrL', 'z00', 'zBase', 'zRadier', 'groundLine', 'groundZ'];
+const ANALYSIS_KEYS = ['split', 'extend', 'keepNubs', 'corrL', 'z00', 'zBase', 'zRadier', 'groundLine', 'groundZ'];
 function undoCommit(){
   if(UNDO.busy) return; let st; try{ st = undoState(); }catch(ex){ return; }
   if(UNDO.cur == null){ UNDO.cur = st; return; }
@@ -5718,6 +5787,7 @@ window.wireSplit = function(R){
   // ---- tracé de l'emprise (polygone) : le bâtiment est isolé dans un volume 3D qui couvre tout l'îlot
   const eg = $('emp-go'); if(!eg) return;
   eg.onclick = () => { eg.blur(); S.empMode = !(S.empMode && !S.empAdd); S.empAdd = false; S.empPts = []; if(S.empMode){ S.splitMode = false; if(S.cadastre == null) S.cadastre = true; } render(); };
+  const kn = $('keep-nubs'); if(kn) kn.onchange = () => { S.extra.keepNubs = kn.checked; S.extra.adj = {}; S.extra.names = {}; analyseBuilding(S.bOrig, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true)); };
   const ea = $('emp-add'); if(ea) ea.onclick = () => { ea.blur(); S.empMode = !(S.empMode && S.empAdd); S.empAdd = S.empMode; S.empPts = []; if(S.empMode){ S.splitMode = false; if(S.cadastre == null) S.cadastre = true; } render(); };
   const eu = $('emp-add-undo'); if(eu) eu.onclick = () => { S.extra.extend = null; S.extra.adj = {}; S.extra.names = {}; analyseBuilding(S.bOrig, S.whyOrig, S.manualOrig).catch((ex) => status('Calcul : ' + ex.message, true)); };
   if(!S.empMode) return;
