@@ -1918,8 +1918,8 @@ async function emlBlob(o, to, subject, body) {
 'use strict';
 /* ============================================================ ligne(s) pour la base de données Excel des mandats (colonnes D à Z, C et S en formule)
    Une ligne par mandat de l'offre. Fichier .xlsx déposé dans le dossier « 3. Offre » avec le PDF et le Word. */
-const BDD_HEAD = [['A', 'Cellules vides'], ['B', 'Statut'], ['C', 'En cours pour qui'], ['D', 'Code \nmandat'], ['E', 'Type mandat'], ['F', 'Nr projet'], ['G', 'Nom projet'], ['H', 'Adresse projet'], ['I', 'Remarques'], ['J', 'Nom client'], ['K', 'Canton'], ['L', 'Description'], ['M', "Catégorie d'ouvrage\n"], ['N', 'SRE/nbre unités utilisations'], ['O', 'Prix/m2 ou unités'], ['P', 'Bureau'], ['Q', 'Offre établie par'], ['R', 'Offre envoyée le'], ['S', 'Offre valable ou échue'], ['T', 'N°offre'], ['U', "Type d'offre"], ['V', 'Prix offre HT'], ['W', 'Prix offre TTC'], ['X', 'Contrôle montant mandat'], ['Y', 'Frais externes HT'], ['Z', 'Transmise pour paiement le'],
-  ['AA', 'Gr OFFRE'], ['AB', 'Offre validée le'], ['AC', 'Attribué le '], ['AD', 'Adresse de facturation'], ['AE', 'Mode de facturation'], ['AF', 'Expert'], ['AG', 'Délai'], ['AH', 'Gr ATTRIBUTION'], ['AI', 'Visité le / Subvention déposée le'], ['AJ', 'Montant trimestriel proposé TTC'], ['AK', 'Trimestre proposé'], ['AL', 'Remise effectuée le / Subvention achevée le '], ['AM', "Nbre d'heures disponible"], ['AN', "Nbre d'heures effectuées"], ['AO', 'Solde heures'], ['AP', 'Gr INGENIEUR'], ['AQ', 'Montant mandat validé TTC'], ['AR', 'Montant prévu à facturer TTC'], ['AS', 'Total facturé HT'], ['AT', 'Total facturé TTC'], ['AU', 'Total payé TTC'], ['AV', 'Solde à facturer TTC'], ['AW', 'Prochaine facturation prévue'], ['AX', 'Dernière facture'], ['AY', 'Statut de facturation'], ['AZ', 'Alerte facturation trimestrielle'], ['BA', 'Gr SUIVI FACTURATION']];
+const BDD_HEAD = [['A', 'Cellules vides'], ['B', 'Statut'], ['C', 'En cours pour qui'], ['D', 'Code \nmandat'], ['E', 'Type mandat'], ['F', 'Nr projet'], ['G', 'Nom projet'], ['H', 'Adresse projet'], ['I', 'Remarques'], ['J', 'Nom client'], ['K', 'Canton'], ['L', 'Description'], ['M', "Catégorie d'ouvrage\n"], ['N', 'SRE/nbre unités utilisations'], ['O', 'Prix/m2 ou unités'], ['P', 'Bureau'], ['Q', 'Offre établie par'], ['R', 'Offre envoyée le'], ['S', 'Offre valable ou échue'], ['T', 'N°offre'], ['U', "Type d'offre"], ['V', 'Prix offre HT'], ['W', 'Prix offre TTC'], ['X', 'Contrôle montant mandat'], ['Y', 'Frais externes TTC'], ['Z', 'Transmise pour paiement le'],
+  ['AA', 'Gr OFFRE'], ['AB', 'Offre validée le'], ['AC', 'Attribué le '], ['AD', 'Adresse de facturation'], ['AE', 'Mode de facturation'], ['AF', 'Expert'], ['AG', 'Délai'], ['AH', 'Gr ATTRIBUTION'], ['AI', 'Visité le / Subvention déposée le'], ['AJ', 'Montant trimestriel proposé TTC'], ['AK', 'Trimestre proposé'], ['AL', 'Remise effectuée le / Subvention achevée le '], ['AM', "Nbre d'heures disponible"], ['AN', "Nbre d'heures effectuées"], ['AO', 'Solde heures'], ['AP', 'Gr INGENIEUR'], ['AQ', 'Montant mandat validé TTC'], ['AR', 'Montant prévu à facturer TTC'], ['AS', 'Total facturé HT'], ['AT', 'Total facturé TTC'], ['AU', 'Total payé TTC'], ['AV', 'Solde à facturer TTC'], ['AW', 'Prochaine facturation prévue'], ['AX', 'Dernière facture'], ['AY', 'Statut de facturation'], ['AZ', 'Alerte facturation trimestrielle'], ['BA', 'Gr SUIVI FACTURATION'], ['BB', 'Parcelle'], ['BC', 'Année permis construire'], ['BD', 'Patrimoine'], ['BE', 'EGID'], ['BF', 'Nbre logement']];
 /* code mandat (D), type mandat (E) et description (L) par mandat – modifiables dans Paramètres */
 const BDD_MANDATS = {
   CECB: { code: 'B967', type: 'CECB', desc: 'CECB' }, CECBP: { code: 'B967', type: 'CECB+', desc: 'CECB plus' }, CECBMAJ: { code: 'B967', type: 'CECB', desc: 'Mise à jour CECB' },
@@ -1959,18 +1959,18 @@ function bddRemarque(o) {
 function bddRows(o) {
   const st = S.settings, b0 = o.batiment, c = o.client, tva = num(st.tva) / 100, rows = [];
   const unites = ['CECB', 'SUBV'].includes(o.type) ? (num(b0.logements) || 1) : Math.round(num(b0.sre) || 0);
-  const client = [c.nom, c.societe, c.adresse, [c.npa, c.localite].filter(Boolean).join(' ')].filter((x) => String(x || '').trim()).join('\n');
+  const client = [c.nom, c.societe, c.adresse, [c.npa, c.localite].filter(Boolean).join(' '), c.email, c.tel].filter((x) => String(x || '').trim()).join('\n');
   const date = (o.envoi && o.envoi.date) || o.dateCreation;
-  const base = (k, extra) => { const m = bddMap(k); return { D: m.code, E: m.type, F: (st.bdd && st.bdd.nrProjet) || 'Z_ATT', G: o.projet.nom || '', H: (b0.adresse || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*$/, ''), I: bddRemarque(o), J: client, K: b0.canton || '', L: m.desc, M: bddCategorie(o), N: unites, P: 'batismart', Q: (st.bdd && st.bdd.initiales) || '', R: date, T: o.numero, X: 'À vérifier', Z: 'na', ...extra }; };
+  const base = (k, extra) => { const m = bddMap(k); return { D: m.code, E: m.type, F: (st.bdd && st.bdd.nrProjet) || 'Z_ATT', G: o.projet.nom || '', H: (b0.adresse || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*$/, ''), I: bddRemarque(o), J: client, K: b0.canton || '', L: m.desc, M: bddCategorie(o), N: unites, BB: b0.parcelle || '', BC: b0.annee || '', BD: b0.patrimoine ?? '', BE: b0.egid || '', BF: b0.logements || '', P: 'batismart', Q: (st.bdd && st.bdd.initiales) || '', R: date, T: o.numero, X: 'À vérifier', Z: 'na', ...extra }; };
   (o.blocks || []).filter((b) => !b.exclude && b.kind !== 'summary').forEach((b, i) => {
     const t = blockTotals(b, o), W = num(t.arrondi), pub = (b.lines || []).filter((l) => /frais de publication/i.test(l.label)).reduce((s, l) => s + num(l.pu) * num(l.qty || 1), 0);
-    const r = base(bddMandatKey(o, b, i), { U: b.mode === 'heures' ? 'Devis' : 'Forfait', W, V: W / (1 + tva), Y: r2(pub), Z: pub > 0 ? 'pas reçue' : 'na' }); // frais externes à encaisser → « pas reçue »
+    const r = base(bddMandatKey(o, b, i), { D: '', U: b.mode === 'heures' ? 'Devis' : 'Forfait', W, V: W / (1 + tva), Y: r2(pub), Z: pub > 0 ? 'pas reçue' : 'na' }); // frais externes à encaisser → « pas reçue »
     if (b.variant) r.L += ' (variante)';
     r.O = r.N ? W / r.N : 0; rows.push(r);
   });
   if (o.type === 'CECB' && o.options.prestation === 'CECB Plus') {
-    if (o.options.subvCantonale) rows.push(base('SUBV_CANT', { U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
-    if (o.options.subvCommunale) rows.push(base('SUBV_COM', { U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
+    if (o.options.subvCantonale) rows.push(base('SUBV_CANT', { D: '', U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
+    if (o.options.subvCommunale) rows.push(base('SUBV_COM', { D: '', U: 'Forfait', V: 0, W: 0, O: 0, Y: 0, X: 'Vérifié' }));
   }
   return rows;
 }
@@ -1980,37 +1980,38 @@ const bddS = (r) => `IFERROR(IF(AND(TODAY()-R${r}>60,ISBLANK(AB${r}),NOT(ISBLANK
 const xdate = (iso) => { if (!iso) return null; const d = new Date(String(iso).slice(0, 10) + 'T00:00:00Z'); return Math.round(d.getTime() / 86400000) + 25569; };
 function bddXlsx(o) { const list = Array.isArray(o) ? o : [o];
   const X = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
-  const hdrStyle = (col) => (['AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH'].includes(col) ? 2 : ['AI', 'AJ', 'AK', 'AL', 'AM', 'AN', 'AO', 'AP'].includes(col) ? 3 : /^A[Q-Z]$|^BA$/.test(col) ? 4 : 1);
+  const hdrStyle = (col) => (['AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH'].includes(col) ? 2 : ['AI', 'AJ', 'AK', 'AL', 'AM', 'AN', 'AO', 'AP'].includes(col) ? 3 : /^A[Q-Z]$|^BA$/.test(col) ? 4 : /^B[B-F]$/.test(col) ? 8 : 1);
   const str = (ref, v, s = 5) => `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`;
   const numc = (ref, v, s = 5) => `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
   let xml = `<row r="1" ht="82.5" customHeight="1">${BDD_HEAD.map(([c, h]) => str(c + '1', h, hdrStyle(c))).join('')}</row>`;
   list.flatMap((x) => bddRows(x)).forEach((r, i) => {
-    const n = i + 2, cells = [str('C' + n, BDD_C)];
-    for (const col of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
+    const n = i + 2, cells = [];
+    for (const col of [...'DEFGHIJKLMNOPQRSTUVWXYZ', 'BB', 'BC', 'BD', 'BE', 'BF']) {
       if (col === 'S') { cells.push(`<c r="S${n}" s="5" t="str"><f>${X(bddS(n))}</f></c>`); continue; }
       const v = r[col]; if (v == null || v === '') continue;
       if (col === 'R') { const d = xdate(v); if (d) cells.push(numc('R' + n, d, 6)); continue; }
-      if (['N', 'O', 'T', 'V', 'W', 'Y'].includes(col) && v !== '' && !isNaN(+v)) cells.push(numc(col + n, +v, col === 'V' || col === 'O' ? 7 : 5));
+      if (['N', 'O', 'T', 'V', 'W', 'Y', 'BC', 'BD', 'BE', 'BF'].includes(col) && v !== '' && !isNaN(+v)) cells.push(numc(col + n, +v, col === 'V' || col === 'O' ? 7 : 5));
       else cells.push(str(col + n, v));
     }
     xml += `<row r="${n}" ht="15" customHeight="1">${cells.join('')}</row>`; // lignes fines (texte coupé à la largeur, comme dans la base)
   });
-  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="53" width="13" customWidth="1"/></cols><sheetData>${xml}</sheetData><dataValidations count="2"><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="U2:U50"><formula1>"Devis,Forfait,Régie"</formula1></dataValidation><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="X2:X50"><formula1>"À vérifier,Vérifié"</formula1></dataValidation></dataValidations></worksheet>`;
+  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="58" width="13" customWidth="1"/></cols><sheetData>${xml}</sheetData><dataValidations count="2"><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="U2:U50"><formula1>"Devis,Forfait,Régie"</formula1></dataValidation><dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="X2:X50"><formula1>"À vérifier,Vérifié"</formula1></dataValidation></dataValidations></worksheet>`;
   const fill = (rgb) => `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`;
   const bd = '<left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/>';
   const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="dd.mm.yyyy"/></numFmts>
 <fonts count="3"><font><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font><font><b/><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font><font><sz val="11"/><name val="Arial Narrow"/><family val="2"/></font></fonts>
-<fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fill('FFFFC000')}${fill('FFFFFF00')}${fill('FF00B0F0')}${fill('FFFFD966')}</fills>
+<fills count="7"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${fill('FFFFC000')}${fill('FFFFFF00')}${fill('FF00B0F0')}${fill('FFFFD966')}${fill('FFB4A7D6')}</fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>${bd}</border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+<cellXfs count="9"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="164" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
-<xf numFmtId="2" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs>
+<xf numFmtId="2" fontId="2" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="1" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
   const R = (id, type, t) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${t}"/>`;
   const rels = (x) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${x}</Relationships>`;
@@ -2640,7 +2641,7 @@ function tBat(o) {
     <label class="f">Catégorie (barème)<select data-bind="batiment.categorie">${Object.entries(CAT_LABEL).map(([k, l]) => `<option value="${k}" ${b.categorie === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     ${F('Nombre de logements', 'batiment.logements', b.logements, 'number')}
     <label class="f">SRE [m²] ${b.sreSource ? `<span class="badge ${/Estimation/.test(b.sreSource) ? '' : 'ok'}">${esc(b.sreSource)}</span>` : ''}<input type="number" step="any" data-type="num" data-bind="batiment.sre" value="${b.sre || ''}"></label>
-    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${hauteurField(b)}${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
+    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${hauteurField(b)}<label class="f">Patrimoine (note recensement 1 à 7)<select data-bind="batiment.patrimoine">${['', '1', '2', '3', '4', '5', '6', '7'].map((x) => `<option value="${x}" ${String(b.patrimoine ?? '') === x ? 'selected' : ''}>${x ? 'Note ' + x + (+x <= 4 ? ' – protégé' : '') : 'non recensé / inconnu'}</option>`).join('')}</select></label>${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
     ${F('Classe RegBL', 'batiment.classe', b.classe)}${F('Chauffage', 'batiment.chauffage', [b.chauffage, b.agent].filter(Boolean).join(' · '))}${F('Info chauffage mise à jour', 'batiment.chauffageMaj', b.chauffageMaj)}
     ${F('Commune', 'batiment.commune', b.commune)}${F('Canton', 'batiment.canton', b.canton)}${F('Parcelle', 'batiment.parcelle', b.parcelle)}</div>
     <h3 style="margin-top:16px">Déplacement</h3>
