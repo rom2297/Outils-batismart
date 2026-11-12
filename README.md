@@ -6,5 +6,5 @@ Site : https://rom2297.github.io/Outils-batismart/
 
 - **Métré 3D** (`metre3d/`), v52 : dimensions d'enveloppe depuis swissBUILDINGS3D.
 - **IsoBase CH** (`isobase/`), v15 : base d'isolants suisses, comparateur et ThermoPlan (U cible, coupe, exports PDF/.usai).
-- **Offres batismart** (`offres/`), v33 : génération des offres CECB et prestations énergétiques.
+- **Offres batismart** (`offres/`), v34 : génération des offres CECB et prestations énergétiques.
 - **PDF Infinity** (`pdf-infinity/`), v3 : outils PDF (fusion, division, compression, OCR, signature…) sans plafond de pages.

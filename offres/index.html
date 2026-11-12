@@ -92,6 +92,15 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--brand)}
 .tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px;overflow-x:auto}
 .tabs button{border:0;background:none;padding:9px 14px;cursor:pointer;color:var(--muted);font-weight:600;border-bottom:2px solid transparent;white-space:nowrap}
 .tabs button.on{color:var(--brand);border-color:var(--brand)}
+.tabs button.tabplus{margin-left:auto;color:var(--brand);border:1px dashed var(--brand);border-radius:8px;padding:5px 12px;margin-bottom:4px}
+.tabs button.tabplus:hover{background:var(--brand);color:#fff}
+.groupbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px;font-size:13px}
+.groupbar a{padding:4px 10px;border:1px solid var(--line);border-radius:14px;text-decoration:none;color:inherit}
+.groupbar a.on{border-color:var(--brand);color:var(--brand);font-weight:700}
+.ltype{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.ltype button{text-align:left;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card,transparent);cursor:pointer;color:inherit}
+.ltype button:hover{border-color:var(--brand)}
+.ltype b{display:block}.ltype span{font-size:12px;color:var(--muted)}
 .note{font-size:12px;color:var(--muted)}
 .badge{font-size:11px;border-radius:4px;padding:1px 6px;background:var(--warn-soft);color:var(--warn);font-weight:600}
 .badge.ok{background:var(--green-soft);color:#1f8a57}
@@ -482,6 +491,9 @@ async function loadAll() {
     for (const d of DEFAULT_SETTINGS.departs) if (!known.has(d.id) && !names.has(d.nom.toLowerCase())) S.settings.departs.push(clone(d)); }
   if (S.settings.bureau) { const d = S.settings.departs[0]; if (S.settings.bureau.lat) Object.assign(d, { lat: S.settings.bureau.lat, lon: S.settings.bureau.lon, adresse: S.settings.bureau.label || d.adresse }); delete S.settings.bureau; }
   for (const o of S.offres) { if (o.projet.nomAuto !== false && o.statut === 'Brouillon' && o.batiment.adresse && o.projet.nom !== projetAuto(o)) { o.projet.nom = projetAuto(o); DB.put('offres', o); } }
+  for (const o of S.offres) { // adresse du chantier corrigée avant la synchronisation → reportée sur le bâtiment (et dans les textes modifiés)
+    const pa = String(o.projet.adresse || '').trim(), ba = String(o.batiment.adresse || '').trim();
+    if (pa && pa !== ba) { if (ba) for (const k in (o.textOverrides || {})) if (typeof o.textOverrides[k] === 'string') o.textOverrides[k] = o.textOverrides[k].split(ba).join(pa); o.batiment.adresse = pa; applyProjetAuto(o); DB.put('offres', o); } }
   for (const o of S.offres) { if (o.projet.nomAuto == null) { o.projet.nomAuto = !o.projet.nom || /^\d{8,10}(-\d+)?\b/.test(o.projet.nom); applyProjetAuto(o); DB.put('offres', o); } }
   autoExpire();
 }
@@ -1739,8 +1751,10 @@ const srvClean = (s) => String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '
 /* nom de dossier batismart : nom de la rue sans le type de voie + n° + localité
    « Chemin du Couchant 41, 1485 Granges-de-Vesin » → « Couchant 41 Granges-de-Vesin » */
 // VOIE_RE / sansVoie : voir core.js
-function dossierNom(o) { return projetAuto(o); }
-const PREST_DOSSIER = { CECB: (o) => 'CECB', EN: () => 'Dossier EN', MIN: () => 'Minergie', PI: () => 'Protection incendie', SUBV: () => 'Subventions', AMO: () => 'AMO', THERMO: () => 'Thermographie', CONF: () => 'Conformité' };
+function dossierNom(o) { // nom saisi à la main prioritaire, sinon fin de l'adresse + localité
+  const p = o.projet || {}; if (p.nomAuto === false && String(p.nom || '').trim()) return String(p.nom).replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+  return projetAuto(o); }
+const PREST_DOSSIER = { CECB: (o) => (o.options.prestation === 'CECB Plus' ? 'CECB plus' : 'CECB'), EN: () => 'Dossier EN', MIN: () => 'Minergie', PI: () => 'Protection incendie', SUBV: () => 'SUBV', AMO: () => 'AMO', THERMO: () => 'Thermographie', CONF: () => 'Conformité' };
 function srvSegs(o, str) { const t = srvTokens(o); return String(str || '').replace(/\{(\w+)\}/g, (_, k) => (t[k] != null ? String(t[k]) : '')).split('/').map(srvClean).filter(Boolean); }
 function srvSubs(o) { return String((S.settings.serveur || {}).sousDossiers || '').split('\n').map((x) => srvSegs(o, x)).filter((x) => x.length); }
 function srvTokens(o) {
@@ -1770,45 +1784,48 @@ async function srvPick() {
   } catch (e) { if (e.name !== 'AbortError') alert('Dossier non accessible : ' + e.message); }
 }
 async function srvWrite(dir, name, blob) { const f = await dir.getFileHandle(name, { create: true }); const w = await f.createWritable(); await w.write(blob); await w.close(); }
-async function srvCreate(o) {
+async function srvCreate(o0) {
   if (!srvSupported()) { alert("La création de dossier sur le serveur nécessite Google Chrome ou Microsoft Edge."); return; }
   let root = await srvHandle(true);
   if (!root) { if (!confirm("Aucun dossier racine du serveur n'est encore défini (ou l'accès a été refusé).\nLe choisir maintenant ?")) return; await srvPick(); root = await srvHandle(true); if (!root) return; }
   if (!pdfReady()) return;
-  const cfg = S.settings.serveur || {}, path = srvPath(o);
+  const grp = groupOf(o0), o = grp[0], cfg = S.settings.serveur || {}, path = srvPath(o);
   try {
     let dir = root; for (const seg of path) dir = await dir.getDirectoryHandle(seg, { create: true });
-    const subs = srvSubs(o);
-    for (const sp of subs) { let d = dir; for (const seg of sp) d = await d.getDirectoryHandle(seg, { create: true }); }
+    for (const sp of groupSubs(grp)) { let d = dir; for (const seg of sp) d = await d.getDirectoryHandle(seg, { create: true }); }
     let target = dir; for (const seg of srvSegs(o, cfg.dossierOffre)) target = await target.getDirectoryHandle(seg, { create: true });
-    const base = pdfFileName(o).replace(/\.pdf$/, '');
-    await srvWrite(target, base + '.pdf', await pdfBlob(o));
-    if (cfg.word !== false) await srvWrite(target, base + '.docx', await buildDocx(o));
-    await srvWrite(target, bddFileName(o), bddXlsx(o));
+    for (const x of grp) {
+      const base = pdfFileName(x).replace(/\.pdf$/, '');
+      await srvWrite(target, base + '.pdf', await pdfBlob(x));
+      if (cfg.word !== false) await srvWrite(target, base + '.docx', await buildDocx(x));
+    }
+    await srvWrite(target, bddFileName(grp), bddXlsx(grp));
     const full = [root.name, ...path, ...srvSegs(o, cfg.dossierOffre)].filter(Boolean).join(' \\ ');
-    o.dossierServeur = full; hist(o, 'Dossier serveur', full); await saveOffre(o); render();
-    toast('Offre enregistrée dans ' + full);
+    for (const x of grp) { x.dossierServeur = full; hist(x, 'Dossier serveur', full); await saveOffre(x); }
+    render(); toast(`${grp.length > 1 ? grp.length + ' offres enregistrées' : 'Offre enregistrée'} dans ${full}`);
   } catch (e) { alert("Impossible d'écrire sur le serveur : " + e.message); }
 }
 
-/* ------------------------------------------------------------ dossier projet prêt à coller (.zip) */
-async function srvZip(o) {
+/* ------------------------------------------------------------ dossier projet prêt à coller (.zip) – toutes les offres liées du projet */
+async function srvZip(o0) {
   if (!pdfReady()) return;
-  const cfg = S.settings.serveur || {}, path = srvPath(o), top = path.join('/'), enc = new TextEncoder(), files = [];
+  const grp = groupOf(o0), o = grp[0], cfg = S.settings.serveur || {}, path = srvPath(o), top = path.join('/'), files = [];
   const dirs = new Set(); const addDir = (p) => { const parts = p.split('/'); for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/') + '/'); };
   addDir(top);
-  for (const sp of srvSubs(o)) addDir([top, ...sp].join('/'));
+  for (const sp of groupSubs(grp)) addDir([top, ...sp].join('/'));
   const off = srvSegs(o, cfg.dossierOffre), target = [top, ...off].join('/');
   addDir(target);
-  const base = pdfFileName(o).replace(/\.pdf$/, '');
   try {
-    const pdf = new Uint8Array(await (await pdfBlob(o)).arrayBuffer()), docx = new Uint8Array(await (await buildDocx(o)).arrayBuffer());
     for (const d of [...dirs].sort()) files.push({ name: d, data: new Uint8Array(0) });
-    files.push({ name: target + '/' + base + '.pdf', data: pdf }, { name: target + '/' + base + '.docx', data: docx }, { name: target + '/' + bddFileName(o), data: new Uint8Array(await bddXlsx(o).arrayBuffer()) });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(storeZip(files)); a.download = String(path[path.length - 1] || 'Projet').normalize('NFD').replace(/[\u0300-\u036f]/g, '') + '.zip'; // nom du .zip sans accents (le dossier à l'intérieur les garde)
+    for (const x of grp) {
+      const base = pdfFileName(x).replace(/\.pdf$/, '');
+      files.push({ name: target + '/' + base + '.pdf', data: new Uint8Array(await (await pdfBlob(x)).arrayBuffer()) }, { name: target + '/' + base + '.docx', data: new Uint8Array(await (await buildDocx(x)).arrayBuffer()) });
+    }
+    files.push({ name: target + '/' + bddFileName(grp), data: new Uint8Array(await bddXlsx(grp).arrayBuffer()) });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(storeZip(files)); a.download = String(path[path.length - 1] || 'Projet').normalize('NFD').replace(/[̀-ͯ]/g, '') + '.zip'; // nom du .zip sans accents (le dossier à l'intérieur les garde)
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
-    hist(o, 'Dossier projet (.zip)', top); await saveOffre(o);
-    toast('Dossier « ' + top + ' » téléchargé – à extraire puis coller sur le serveur');
+    for (const x of grp) { hist(x, 'Dossier projet (.zip)', top); await saveOffre(x); }
+    toast(`Dossier « ${top} » téléchargé (${grp.length} offre${grp.length > 1 ? 's' : ''}) – à extraire puis coller sur le serveur`);
   } catch (e) { alert('Création du dossier impossible : ' + e.message); }
 }
 
@@ -1829,7 +1846,7 @@ function dossierLibreModal() {
   m.querySelector('#dl-go').onclick = async () => {
     const o = fake(), cfg = S.settings.serveur || {}, path = srvPath(o), top = path.join('/'), dirs = new Set(), files = [];
     const addDir = (p) => { const parts = p.split('/'); for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/') + '/'); };
-    addDir(top); for (const sp of srvSubs(o)) addDir([top, ...sp].join('/'));
+    addDir(top); for (const sp of groupSubs([o])) addDir([top, ...sp].join('/'));
     const target = [top, ...srvSegs(o, cfg.dossierOffre)].join('/'); addDir(target);
     for (const d of [...dirs].sort()) files.push({ name: d, data: new Uint8Array(0) });
     for (const f of m.querySelector('#dl-files').files) files.push({ name: target + '/' + f.name, data: new Uint8Array(await f.arrayBuffer()) });
@@ -1855,7 +1872,7 @@ function mailResume(o) {
   switch (o.type) {
     case 'CECB':
       if (op.prestation === 'Mise à jour CECB') return `Nous vous proposons la mise à jour du CECB existant${majMotif(op) ? ' suite à ' + majMotif(op) : ''}, ${op.majVisite ? 'visite du bâtiment et ' : 'sur la base des documents fournis, '}frais de publication compris.`;
-      if (op.prestation === 'CECB Plus') return `Nous vous proposons l'établissement d'un CECB Plus avec le rapport de conseils (jusqu'à 3 variantes de rénovation, estimation des coûts et des subventions)${op.subvCantonale ? ', ainsi que la gestion de la subvention cantonale qui vous est offerte' : ''}.${op.chauffren ? ' Le conseil incitatif « Chauffez-renouvelable » est également compris.' : ''}`;
+      if (op.prestation === 'CECB Plus') return `Nous vous proposons l'établissement d'un CECB Plus avec le rapport de conseils (jusqu'à 3 variantes de rénovation, estimation des coûts et des subventions)${op.subvCantonale ? ', ainsi que la gestion de la subvention cantonale qui vous est offerte' : ''}.${op.chauffren ? ' Le conseil incitatif « Chauffez-renouvelable » est également compris. Ce conseil complémentaire permettra de vous conseiller gratuitement sur les possibilités et opportunités de remplacement de votre chauffage. Il permettra par ailleurs de compléter le CECB plus sur ce point. Ce conseil est gratuit pour autant que votre chauffage ait 10 ans et que cette prestation soit effectuée avant la publication du CECB plus.' : ''}`;
       return "Nous vous proposons l'établissement du CECB de votre bâtiment, visite et frais de publication compris.";
     case 'EN': case 'MIN': {
       const ren = !b.neuf && op.nature && op.nature !== 'nouvelle construction';
@@ -1901,14 +1918,14 @@ async function emlBlob(o, to, subject, body) {
 'use strict';
 /* ============================================================ ligne(s) pour la base de données Excel des mandats (colonnes D à Z, C et S en formule)
    Une ligne par mandat de l'offre. Fichier .xlsx déposé dans le dossier « 3. Offre » avec le PDF et le Word. */
-const BDD_HEAD = [['A', 'Cellules vides'], ['B', 'Statut'], ['C', 'En cours pour qui'], ['D', 'Code \nmandat'], ['E', 'Type mandat'], ['F', 'Nr projet'], ['G', 'Nom projet'], ['H', 'Adresse projet'], ['I', 'Remarques'], ['J', 'Nom client'], ['K', 'Canton'], ['L', 'Description'], ['M', "Catégorie d'ouvrage\n"], ['N', 'SRE/nbre unités utilisations'], ['O', 'Prix/m2 ou unités'], ['P', 'Bureau'], ['Q', 'Offre établie par'], ['R', 'Offre envoyée le'], ['S', 'Offre valable ou échue'], ['T', 'N°offre'], ['U', "Type d'offre"], ['V', 'Prix offre HT'], ['W', 'Prix offre TTC'], ['X', 'Contrôle montant mandat'], ['Y', 'Frais externes TTC'], ['Z', 'Transmise pour paiement le'],
+const BDD_HEAD = [['A', 'Cellules vides'], ['B', 'Statut'], ['C', 'En cours pour qui'], ['D', 'Code \nmandat'], ['E', 'Type mandat'], ['F', 'Nr projet'], ['G', 'Nom projet'], ['H', 'Adresse projet'], ['I', 'Remarques'], ['J', 'Nom client'], ['K', 'Canton'], ['L', 'Description'], ['M', "Catégorie d'ouvrage\n"], ['N', 'SRE/nbre unités utilisations'], ['O', 'Prix/m2 ou unités'], ['P', 'Bureau'], ['Q', 'Offre établie par'], ['R', 'Offre envoyée le'], ['S', 'Offre valable ou échue'], ['T', 'N°offre'], ['U', "Type d'offre"], ['V', 'Prix offre HT'], ['W', 'Prix offre TTC'], ['X', 'Contrôle montant mandat'], ['Y', 'Frais externes HT'], ['Z', 'Transmise pour paiement le'],
   ['AA', 'Gr OFFRE'], ['AB', 'Offre validée le'], ['AC', 'Attribué le '], ['AD', 'Adresse de facturation'], ['AE', 'Mode de facturation'], ['AF', 'Expert'], ['AG', 'Délai'], ['AH', 'Gr ATTRIBUTION'], ['AI', 'Visité le / Subvention déposée le'], ['AJ', 'Montant trimestriel proposé TTC'], ['AK', 'Trimestre proposé'], ['AL', 'Remise effectuée le / Subvention achevée le '], ['AM', "Nbre d'heures disponible"], ['AN', "Nbre d'heures effectuées"], ['AO', 'Solde heures'], ['AP', 'Gr INGENIEUR'], ['AQ', 'Montant mandat validé TTC'], ['AR', 'Montant prévu à facturer TTC'], ['AS', 'Total facturé HT'], ['AT', 'Total facturé TTC'], ['AU', 'Total payé TTC'], ['AV', 'Solde à facturer TTC'], ['AW', 'Prochaine facturation prévue'], ['AX', 'Dernière facture'], ['AY', 'Statut de facturation'], ['AZ', 'Alerte facturation trimestrielle'], ['BA', 'Gr SUIVI FACTURATION']];
 /* code mandat (D), type mandat (E) et description (L) par mandat – modifiables dans Paramètres */
 const BDD_MANDATS = {
   CECB: { code: 'B967', type: 'CECB', desc: 'CECB' }, CECBP: { code: 'B967', type: 'CECB+', desc: 'CECB plus' }, CECBMAJ: { code: 'B967', type: 'CECB', desc: 'Mise à jour CECB' },
   CHAUFF_REN: { code: 'B000', type: 'CHAUFF_REN', desc: 'Conseil incitatif chauffez-renouvelable' }, SUBV_CANT: { code: 'B000', type: 'SUBV', desc: 'Subvention cantonale CECB+' }, SUBV_COM: { code: 'B000', type: 'SUBV', desc: 'Subvention communale CECB+' },
   THERMO_CECB: { code: 'B000', type: 'THERMO', desc: 'Étude thermographique CECB+' }, EN: { code: 'B400', type: 'EN', desc: 'Dossier énergétique' },
-  MIN_P: { code: 'B400', type: 'MINERGIE', desc: 'Minergie provisoire et dossier énergétique (phase projet)' }, MIN_R: { code: 'B400', type: 'MINERGIE', desc: 'Minergie définitif (phase réalisation)' },
+  MIN_P: { code: 'B400', type: 'MIN_P', desc: 'Certification Minergie provisoire et dossier EN' }, MIN_R: { code: 'B400', type: 'MIN_R', desc: 'Certification Minergie définitive' },
   PI_P: { code: 'B450', type: 'PI_P', desc: 'Prestations PI pour la phase projet (SIA 3.32 et 3.33)' }, PI_R: { code: 'B450', type: 'PI_R', desc: 'Prestations PI pour la phase réalisation (SIA 4.41 à 5.53)' },
   SUBV: { code: 'B000', type: 'SUBV', desc: 'Gestion des subventions Programme Bâtiments' }, AMO: { code: 'B000', type: 'AMO', desc: "Assistance au maître d'ouvrage énergie" },
   THERMO: { code: 'B000', type: 'THERMO', desc: 'Étude thermographique' }, CONF: { code: 'B000', type: 'CONF', desc: 'Contrôle de conformité' }, LIBRE: { code: '', type: '', desc: '' },
@@ -1947,7 +1964,7 @@ function bddRows(o) {
   const base = (k, extra) => { const m = bddMap(k); return { D: m.code, E: m.type, F: (st.bdd && st.bdd.nrProjet) || 'Z_ATT', G: o.projet.nom || '', H: (b0.adresse || '').replace(/\s*\((VD|FR|NE|VS|GE|JU|BE)\)\s*$/, ''), I: bddRemarque(o), J: client, K: b0.canton || '', L: m.desc, M: bddCategorie(o), N: unites, P: 'batismart', Q: (st.bdd && st.bdd.initiales) || '', R: date, T: o.numero, X: 'À vérifier', Z: 'na', ...extra }; };
   (o.blocks || []).filter((b) => !b.exclude && b.kind !== 'summary').forEach((b, i) => {
     const t = blockTotals(b, o), W = num(t.arrondi), pub = (b.lines || []).filter((l) => /frais de publication/i.test(l.label)).reduce((s, l) => s + num(l.pu) * num(l.qty || 1), 0);
-    const r = base(bddMandatKey(o, b, i), { U: b.mode === 'heures' ? 'Devis' : 'Forfait', W, V: W / (1 + tva), Y: r2(pub) });
+    const r = base(bddMandatKey(o, b, i), { U: b.mode === 'heures' ? 'Devis' : 'Forfait', W, V: W / (1 + tva), Y: r2(pub), Z: pub > 0 ? 'pas reçue' : 'na' }); // frais externes à encaisser → « pas reçue »
     if (b.variant) r.L += ' (variante)';
     r.O = r.N ? W / r.N : 0; rows.push(r);
   });
@@ -1961,13 +1978,13 @@ function bddRows(o) {
 const BDD_C = '=SI(OU(B3670="en cours";B3670="en pause");AF3670;SI(ET(B3670=Menus!$B$10;NB.SI.ENS(T_Factures[N° projet];F3670;T_Factures[Type mandat];E3670;T_Factures[N° offre / avenant];T3670;T_Factures[Facturé le];"";T_Factures[Statut technique];"<>Annulé";T_Factures[Remarque pour facture];"*Source Projets ligne "&LIGNE()&"*")>0);"À facturer";""))';
 const bddS = (r) => `IFERROR(IF(AND(TODAY()-R${r}>60,ISBLANK(AB${r}),NOT(ISBLANK(R${r}))),"OFFRE ECHUE A ANNULER",IF(AND(TODAY()-R${r}>30,ISBLANK(AB${r})*NOT(ISBLANK(R${r}))),"A RELANCER","-")),"")`;
 const xdate = (iso) => { if (!iso) return null; const d = new Date(String(iso).slice(0, 10) + 'T00:00:00Z'); return Math.round(d.getTime() / 86400000) + 25569; };
-function bddXlsx(o) {
+function bddXlsx(o) { const list = Array.isArray(o) ? o : [o];
   const X = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
   const hdrStyle = (col) => (['AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH'].includes(col) ? 2 : ['AI', 'AJ', 'AK', 'AL', 'AM', 'AN', 'AO', 'AP'].includes(col) ? 3 : /^A[Q-Z]$|^BA$/.test(col) ? 4 : 1);
   const str = (ref, v, s = 5) => `<c r="${ref}" s="${s}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`;
   const numc = (ref, v, s = 5) => `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
   let xml = `<row r="1" ht="82.5" customHeight="1">${BDD_HEAD.map(([c, h]) => str(c + '1', h, hdrStyle(c))).join('')}</row>`;
-  bddRows(o).forEach((r, i) => {
+  list.flatMap((x) => bddRows(x)).forEach((r, i) => {
     const n = i + 2, cells = [str('C' + n, BDD_C)];
     for (const col of 'DEFGHIJKLMNOPQRSTUVWXYZ') {
       if (col === 'S') { cells.push(`<c r="S${n}" s="5" t="str"><f>${X(bddS(n))}</f></c>`); continue; }
@@ -2007,8 +2024,11 @@ function bddXlsx(o) {
   const enc = new TextEncoder();
   return new Blob([storeZip(files.map(([name, d]) => ({ name, data: enc.encode(d) })))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
-const bddFileName = (o) => pdfFileName(o).replace(/_Offre_/, '_BDD_').replace(/\.pdf$/, '.xlsx');
-function bddDownload(o) { const a = document.createElement('a'); a.href = URL.createObjectURL(bddXlsx(o)); a.download = bddFileName(o); document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
+const bddFileName = (o) => { const list = Array.isArray(o) ? o : [o], r = list[0];
+  if (list.length < 2) return pdfFileName(r).replace(/_Offre_/, '_BDD_').replace(/\.pdf$/, '.xlsx');
+  const T = TYPES[r.type], fic = typeof T.fichier === 'function' ? T.fichier(r) : T.fichier;
+  return pdfFileName(r).replace(`_Offre_${fic}_`, '_BDD_').replace(/\.pdf$/, '.xlsx'); };
+function bddDownload(o0) { const o = groupOf(o0), a = document.createElement('a'); a.href = URL.createObjectURL(bddXlsx(o)); a.download = bddFileName(o); document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
 
 'use strict';
 /* ============================================================ assistant « Nouvelle offre » : 4 étapes, une question par écran */
@@ -2097,7 +2117,7 @@ function wClient(o) {
   return `<h1 class="wiz-q">Pour quel client ?</h1><p class="wiz-help">Cherchez un client existant ou remplissez ses coordonnées (il sera enregistré).</p>
   ${S.clients.length ? `<input type="search" class="big" data-wcq placeholder="Rechercher un client existant…" value="${esc(VIEW.wcq || '')}" aria-label="Rechercher un client">
   ${sugg.length ? `<ul class="cands big">${sugg.map((x) => `<li><button type="button" data-act="wizClient" data-id="${x.id}"><b>${esc(x.societe || x.nom)}</b> ${x.societe && x.nom ? '· ' + esc(x.nom) : ''} <span class="note">${esc([x.npa, x.localite].filter(Boolean).join(' '))}</span></button></li>`).join('')}</ul>` : ''}` : ''}
-  <div class="card wiz-card"><div class="grid g2">
+  <div class="card wiz-card">${o.batiment.adresse ? `<div class="row" style="margin:-4px 0 10px"><button type="button" class="btn sm ghost" data-act="cliFromBat" data-id="${o.id}" title="${esc(o.batiment.adresse)}">📍 Reprendre l'adresse du bâtiment</button></div>` : ''}<div class="grid g2">
     ${F('Nom / raison sociale *', 'client.societe', c.societe)}${F('Personne de contact', 'client.nom', c.nom)}
     ${F('Adresse', 'client.adresse', c.adresse)}<div class="grid" style="grid-template-columns:110px 1fr;gap:10px">${F('NPA', 'client.npa', c.npa)}${F('Localité', 'client.localite', c.localite)}</div>
     ${F('E-mail', 'client.email', c.email, 'email')}${F('Téléphone', 'client.tel', c.tel, 'tel')}
@@ -2119,6 +2139,7 @@ function wFin(o) {
     <button class="btn lg" data-act="preview">👁 Voir le PDF</button>
     <button class="btn lg" data-act="pdf" data-id="${o.id}">⬇ Télécharger le PDF</button>
     <button class="btn lg" data-act="docx" data-id="${o.id}">⬇ Word</button>
+    <button class="btn lg" data-act="addLinked" data-id="${o.id}" title="Offre séparée liée : n° ${esc(nextLinkedNumero(o))}">＋ Autre offre (EN, PI…)</button>
     <button class="btn lg pri" data-act="srvZip" data-id="${o.id}" title="${esc(srvPath(o).join(' \\ '))} : 1. Doc reçus, 2. E-mails, 3. Offre (PDF + Word), 4. Photos…">📁 Créer le dossier projet</button>
     <button class="btn lg pri" data-act="send" data-id="${o.id}">✉ Envoyer au client</button></div>
   <p class="note" style="text-align:center;margin-top:8px">Dossier : <b>${esc(srvPath(o).join(' \\ '))}</b> – avec l'offre dans « ${esc(srvSegs(o, S.settings.serveur.dossierOffre).join(' \\ ') || 'racine')} » · à extraire puis coller dans 1920 Projets en attente</p>
@@ -2518,7 +2539,7 @@ function vOffre() {
   return `<div class="editbar"><a class="btn ghost" href="#/dash">←</a><div class="grow"><b class="mono">${esc(o.numero)}</b> · ${esc(T.label)} <span class="note">· ${esc(o.projet.nom || 'sans projet')}</span></div>
     ${stSelect(o)}<button class="btn" data-act="preview">Aperçu PDF</button><button class="btn" data-act="pdf" data-id="${o.id}">Télécharger PDF</button><button class="btn" data-act="docx" data-id="${o.id}" title="Version Word modifiable">Word</button><button class="btn" data-act="bdd" data-id="${o.id}" title="Ligne(s) pour la base de données des mandats (Excel)">📊 Ligne BDD</button><button class="btn" data-act="srvZip" data-id="${o.id}" title="Télécharge le dossier du projet (${esc(srvPath(o).join(' \\ '))}) avec le PDF et le Word, prêt à coller sur le serveur">📁 Créer le dossier</button>${S.settings.serveur.racine ? `<button class="btn ghost" data-act="srv" data-id="${o.id}" title="${o.dossierServeur ? 'Mettre à jour : ' + esc(o.dossierServeur) : 'Écrire directement dans le dossier racine choisi dans Paramètres'}">Écrire sur le serveur${o.dossierServeur ? ' ✓' : ''}</button>` : ''}<button class="btn pri" data-act="send" data-id="${o.id}">Envoyer</button>
     <button class="btn ghost" data-act="dup" data-id="${o.id}">Dupliquer</button><button class="btn ghost danger" data-act="delOffre">Supprimer</button></div>
-  <div class="split"><div><div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div><div id="tabc">${{ client: tClient, bat: tBat, prest: tPrest, txt: tTxt, hist: tHist }[t](o)}</div></div>
+  <div class="split"><div>${groupBar(o)}<div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}<button class="tabplus" data-act="addLinked" data-id="${o.id}" title="Créer une offre séparée liée à ce projet (EN, PI, CECB, AMO…) – n° ${esc(nextLinkedNumero(o))}">＋ Autre offre</button></div><div id="tabc">${{ client: tClient, bat: tBat, prest: tPrest, txt: tTxt, hist: tHist }[t](o)}</div></div>
   <aside id="aside">${aside(o)}</aside></div>`;
 }
 function aside(o) {
@@ -2597,7 +2618,7 @@ function tClient(o) {
   return `<div class="grid"><div class="card"><div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0">Client</h2>
     <input list="dl-clients" id="pickClient" placeholder="Rechercher un client existant…" style="max-width:280px" aria-label="Client existant"><datalist id="dl-clients">${S.clients.map((x) => `<option value="${esc(x.societe || x.nom)}${x.societe && x.nom ? ' – ' + esc(x.nom) : ''}" data-id="${x.id}"></option>`).join('')}</datalist>
     ${o.clientId ? `<a class="btn sm" href="#/client/${o.clientId}">Fiche client</a>` : '<span class="note">Nouveau client – enregistré automatiquement</span>'}</div>
-    <div class="grid g2">${F('Nom / raison sociale', 'client.societe', c.societe)}${F('Personne de contact (Prénom Nom)', 'client.nom', c.nom)}
+    ${o.batiment.adresse ? `<div class="row" style="margin:-4px 0 10px"><button type="button" class="btn sm ghost" data-act="cliFromBat" data-id="${o.id}" title="${esc(o.batiment.adresse)}">📍 Reprendre l'adresse du bâtiment</button></div>` : ''}<div class="grid g2">${F('Nom / raison sociale', 'client.societe', c.societe)}${F('Personne de contact (Prénom Nom)', 'client.nom', c.nom)}
     <label class="f">Formule d'appel<select data-bind="client.civilite">${['Madame, Monsieur', 'Madame', 'Monsieur', 'Mesdames, Messieurs'].map((x) => `<option ${c.civilite === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
     ${F('Adresse', 'client.adresse', c.adresse)}${F('NPA', 'client.npa', c.npa)}${F('Localité', 'client.localite', c.localite)}${F('Téléphone', 'client.tel', c.tel, 'tel')}${F('E-mail', 'client.email', c.email, 'email')}</div></div>
   <div class="card"><h2>Offre et projet</h2><div class="grid g3">${F('Numéro', 'numero', o.numero)}${F('Date de création', 'dateCreation', o.dateCreation, 'date')}${F('Validité [jours]', 'validiteJours', o.validiteJours, 'number')}</div>
@@ -2887,6 +2908,7 @@ function newOffreModal(clientId) {
 }
 async function duplicate(id) {
   const src = S.offres.find((o) => o.id === id), o = clone(src), d = today();
+  delete o.parentId;
   Object.assign(o, { id: uid(), numero: nextNumero(new Date().toISOString()), statut: 'Brouillon', dateCreation: d, dateValidite: addDays(d, num(src.validiteJours)), envoi: null, historique: [], createdAt: new Date().toISOString() });
   o.blocks.forEach((b) => { const old = b.id; b.id = uid(); o.blocks.forEach((x) => { if (x.refs) x.refs = x.refs.map((r) => (r === old ? b.id : r)); }); b.lines && b.lines.forEach((l) => (l.id = uid())); });
   applyProjetAuto(o);
@@ -2919,6 +2941,9 @@ function sendModal(o) {
 
 /* ------------------------------------------------------------ événements */
 function setPath(obj, path, val) { const k = path.split('.'); let o = obj; for (let i = 0; i < k.length - 1; i++) o = o[k[i]] ??= {}; o[k[k.length - 1]] = val; }
+/* adresse du chantier = adresse du bâtiment : les deux champs restent synchronisés (textes, nom du projet, dossier, BDD) */
+const _setPath = setPath;
+setPath = function (obj, path, val) { _setPath(obj, path, val); if (obj && obj.batiment && obj.projet) { if (path === 'projet.adresse') obj.batiment.adresse = val; else if (path === 'batiment.adresse') obj.projet.adresse = val; } };
 function readVal(el) { if (el.dataset.type === 'bool' || el.type === 'checkbox') return el.checked; if (el.dataset.type === 'numnull') return el.value === '' ? null : num(el.value); if (el.dataset.type === 'num' || el.type === 'number') return el.value === '' ? 0 : num(el.value); return el.value; }
 const STRUCT = /^(batiment\.(categorie|logements|sre|surfaceSol|distanceKm|dureeMin|zoneManual|complexite)|options\.)/;
 function onInput(e) {
@@ -2978,6 +3003,10 @@ async function onClick(e) {
     case 'new': startWizard(); break;
     case 'newForClient': startWizard(S.param); break;
     case 'dup': duplicate(a.dataset.id); break;
+    case 'cliFromBat': { const o = byId; if (!o) break; const b = o.batiment, sp = splitAdresse(b.adresse);
+      o.client.adresse = sp.rue || b.rue || ''; o.client.npa = sp.npa || ''; o.client.localite = b.localitePost || sp.localite || '';
+      touch(o, false); await saveOffre(o); render(); toast("Adresse du bâtiment reprise pour le client"); break; }
+    case 'addLinked': addLinkedModal(byId || cur()); break;
     case 'pdf': pdfDownload(byId); break;
     case 'docx': docxDownload(byId); break;
     case 'srv': srvCreate(byId); break;
@@ -3041,6 +3070,42 @@ function applyTheme() { const t = S.settings.theme; if (t === 'auto') document.d
   applyTheme(); shell(); window.addEventListener('hashchange', route); route();
 })();
 
+
+/* ============================================================ offres liées d'un même projet (n° de base -1, -2, -3…) */
+function groupRoot(o) { return (o.parentId && S.offres.find((x) => x.id === o.parentId)) || o; }
+function groupOf(o) { const r = groupRoot(o); return [r, ...S.offres.filter((x) => x.parentId === r.id && x.id !== r.id).sort((a, b) => (parseInt(a.numero.split('-').pop(), 10) || 0) - (parseInt(b.numero.split('-').pop(), 10) || 0))]; }
+function nextLinkedNumero(o) { const r = groupRoot(o), base = String(r.numero).replace(/-\d+$/, ''), used = S.offres.filter((x) => String(x.numero).startsWith(base + '-')).map((x) => parseInt(String(x.numero).slice(base.length + 1), 10) || 0); return `${base}-${Math.max(0, ...used) + 1}`; }
+/* dossiers complémentaires : SUBV (subvention cantonale / communale) et CHAUFF-REN (conseil incitatif) le cas échéant */
+function extraDossiers(o) { const op = o.options || {}, out = [];
+  if (o.type === 'CECB' && op.prestation === 'CECB Plus') out.push(['SUBV']); // gestion de la subvention toujours comprise (offerte)
+  if (o.type === 'CECB' && op.chauffren && op.prestation !== 'Mise à jour CECB') out.push(['CHAUFF-REN']);
+  return out; }
+function groupSubs(grp) { const seen = new Set(), out = []; grp.forEach((x) => [...srvSubs(x), ...extraDossiers(x)].forEach((sp) => { const k = sp.join('/'); if (!seen.has(k)) { seen.add(k); out.push(sp); } })); return out; }
+function groupBar(o) {
+  const g = groupOf(o); if (g.length < 2) return '';
+  return `<div class="groupbar"><span class="note">Offres du projet :</span>${g.map((x) => `<a href="#/offre/${x.id}" class="${x.id === o.id ? 'on' : ''}" title="${esc(TYPES[x.type].label)} · ${esc(x.statut)}"><span class="mono">${esc(x.numero)}</span> ${esc(x.type === 'CECB' ? x.options.prestation : x.type === 'PI' ? ({ P: 'PI_P', R: 'PI_R' }[piPhase(x.options)] || 'PI') : x.type)}</a>`).join('')}</div>`;
+}
+function addLinkedModal(o) {
+  if (!o) return;
+  const opts = [...PRESTAS.filter((p) => p.t !== 'PI' && p.t !== 'LIBRE'), { t: 'PI', ph: 'PR', n: 'Protection incendie', d: 'Projet + réalisation (PI)' }, { t: 'PI', ph: 'P', n: 'PI phase projet', d: 'Concept seul (PI_P)' }, { t: 'PI', ph: 'R', n: 'PI phase réalisation', d: 'Suivi des travaux (PI_R)' }, { t: 'LIBRE', n: 'Offre libre', d: 'Lignes saisies à la main' }];
+  const m = modal(`<h2>Autre offre pour ce projet</h2><p class="note" style="margin-top:-4px">Crée une offre distincte n° <b class="mono">${esc(nextLinkedNumero(o))}</b> avec le même client, le même bâtiment et le même projet (${esc(o.projet.nom || '–')}). Le dossier projet et la ligne BDD regroupent ensuite toutes les offres.</p>
+    <div class="ltype">${opts.map((p, i) => `<button data-li="${i}"><b>${esc(p.n)}</b><span>${esc(p.d)}</span></button>`).join('')}</div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" data-close>Annuler</button></div>`);
+  m.querySelectorAll('[data-li]').forEach((btn) => { btn.onclick = async () => { const p = opts[+btn.dataset.li]; m.remove(); await createLinked(o, p); }; });
+}
+async function createLinked(src, p) {
+  const root = groupRoot(src), n = newOffre(p.t);
+  n.numero = nextLinkedNumero(src); n.parentId = root.id;
+  n.clientId = src.clientId; n.client = clone(src.client); n.batiment = clone(src.batiment); delete n.batiment.cx3d;
+  if (src.batiment.cx3d) n.batiment.cx3d = clone(src.batiment.cx3d);
+  n.projet = { ...clone(src.projet) };
+  if (p.p) n.options.prestation = p.p; if (p.ph) n.options.phase = p.ph;
+  if (n.batiment.neuf && p.t === 'EN') n.options.nature = 'nouvelle construction';
+  n.historique = []; hist(n, 'Création', `${TYPES[p.t].label} – offre liée à l'offre n° ${root.numero}`);
+  rebuild(n); await saveOffre(n);
+  hist(root, 'Offre liée', `n° ${n.numero} (${p.n})`); await saveOffre(root);
+  toast(`Offre ${n.numero} créée`); VIEW.tab = 'prest'; location.hash = '#/offre/' + n.id;
+}
 </script>
 <script data-goatcounter="https://outils-batismart.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </body>
