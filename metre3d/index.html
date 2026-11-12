@@ -5510,7 +5510,7 @@ function wSync(){                           // régénère les ouvertures de la 
 function renderQuick(){
   const box = $('qw'); if(!box) return; const ts = WT(), parts = wParts(), q = S.extra.wqty || {};
   const n3d = (id, pk) => (S.extra.fenetres || []).filter((f) => f.gen === '3d' && f.typeId === id && `${f.facade}|${(T3 && T3.dc && f.__part) || ''}` === pk).length;
-  $('qw-types').tBodies[0].innerHTML = ts.map((t, i) => `<tr data-t="${i}"><td class="mono"><b>${esc(t.id)}</b></td><td><select data-k="kind" aria-label="Genre ${esc(t.id)}">${opt(WKINDS, t.kind)}</select></td>
+  $('qw-types').tBodies[0].innerHTML = ts.map((t, i) => `<tr data-t="${i}"><td class="mono"><input data-k="id" value="${esc(t.id)}" style="width:56px;font-weight:700" aria-label="Nom du type"></td><td><select data-k="kind" aria-label="Genre ${esc(t.id)}">${opt(WKINDS, t.kind)}</select></td>
       <td class="n"><input type="number" step="0.01" min="0" data-k="l" value="${t.l || ''}" aria-label="Largeur ${esc(t.id)}"></td><td class="n"><input type="number" step="0.01" min="0" data-k="h" value="${t.h || ''}" aria-label="Hauteur ${esc(t.id)}"></td>
       <td class="n">${fmt((t.l || 0) * (t.h || 0))}</td><td><button type="button" class="x" data-tdel="${i}" title="Supprimer ce type (et ses fenêtres)">×</button></td></tr>`).join('')
     || '<tr><td colspan="6" class="note">Aucun type. Ajoutez p. ex. F1 = 1.20 × 1.40 m.</td></tr>';
@@ -5525,6 +5525,9 @@ function renderQuick(){
 }
 function wChanged(){ wSync(); renderQuick(); renderComp(); complementsChanged(); }
 $('qw-types').addEventListener('change', (e) => { const tr = e.target.closest('tr[data-t]'), k = e.target.dataset.k; if(!tr || !k) return; const t = WT()[+tr.dataset.t];
+  if(k === 'id'){ const v = e.target.value.trim(); if(!v || WT().some((x) => x !== t && x.id === v)){ e.target.value = t.id; return; }
+    const old = t.id; t.id = v; (S.extra.fenetres || []).forEach((x) => { if(x.typeId === old) x.typeId = v; });
+    const q = S.extra.wqty || {}; Object.keys(q).forEach((qk) => { if(qk.startsWith(old + '|')){ q[v + qk.slice(old.length)] = q[qk]; delete q[qk]; } }); if(T3 && T3.wType === old) T3.wType = v; wChanged(); return; }
   t[k] = k === 'kind' ? e.target.value : (parseFloat(String(e.target.value).replace(',', '.')) || 0); wChanged(); });
 $('qw-types').addEventListener('click', (e) => { const d = e.target.closest('[data-tdel]'); if(!d) return; const t = WT()[+d.dataset.tdel];
   const n = Object.entries(S.extra.wqty || {}).filter(([k, v]) => k.startsWith(t.id + '|') && v > 0).length + (S.extra.fenetres || []).filter((f) => f.gen === '3d' && f.typeId === t.id).length;
@@ -5553,7 +5556,11 @@ function renderWinPanel(){
     <label for="w-type">Type posé au clic</label><select id="w-type">${ts.map((t) => `<option value="${esc(t.id)}"${t.id === cur ? ' selected' : ''}>${esc(t.id)} — ${esc(t.kind)} ${fmt(t.l)} × ${fmt(t.h)} m</option>`).join('')}</select>
     <div class="row" style="gap:6px;align-items:end;margin-top:4px;flex-wrap:wrap"><select id="w-nk" aria-label="Genre du nouveau type" style="width:96px">${opt(WKINDS, T3.wNk || 'Fenêtre')}</select><input type="number" step="0.01" id="w-nl" placeholder="larg." style="width:64px" aria-label="Largeur nouveau type"><span>×</span><input type="number" step="0.01" id="w-nh" placeholder="haut." style="width:64px" aria-label="Hauteur nouveau type"><button type="button" class="ghost sm" id="w-new">+ type</button></div>
     <div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap">${WKINDS.map((k) => `<button type="button" class="ghost sm" data-wk="${k}">${k === 'Fenêtre' ? '▭' : k === 'Porte' ? '🚪' : '◇'} ${k}</button>`).join('')}</div>
-    ${f ? `<div class="note" style="margin-top:6px">Sélection : <b>${esc(f.typeId || '')}</b> ${fmt(f.l)} × ${fmt(f.h)} m, ${esc(f.facade)} <button type="button" class="ghost sm" id="w-del">Supprimer</button></div>` : ''}
+    <details id="w-edit" style="margin-top:6px"${T3.wEditOpen ? ' open' : ''}><summary class="note" style="cursor:pointer">Modifier les types (${ts.length})</summary>
+      <div class="wtt" style="margin-top:4px">${ts.map((t, i) => { const n = (S.extra.fenetres || []).filter((x) => x.typeId === t.id).reduce((a, x) => a + (x.nombre || 1), 0);
+        return `<div data-wt="${i}" style="display:flex;gap:3px;align-items:center;margin-bottom:3px;font-size:12px"><input data-k="id" value="${esc(t.id)}" title="Nom du type" style="width:40px;padding:3px;font-weight:700"><select data-k="kind" style="width:74px;padding:3px">${opt(WKINDS, t.kind)}</select><input type="number" step="0.01" min="0.1" data-k="l" value="${t.l}" title="Largeur m" style="width:56px;padding:3px"><span>×</span><input type="number" step="0.01" min="0.1" data-k="h" value="${t.h}" title="Hauteur m" style="width:56px;padding:3px"><span class="note" title="Fenêtres de ce type" style="min-width:18px;text-align:right">${n}</span><button type="button" class="x" data-wtdel="${i}" title="Supprimer ce type et ses fenêtres">×</button></div>`; }).join('')}</div>
+      <p class="note" style="margin:2px 0 0">Les fenêtres posées suivent leur type (dimensions, genre) ; renommer garde le lien.</p></details>
+    ${f ? `<div class="note" style="margin-top:6px">Sélection : <select id="w-sel-type" aria-label="Type de la fenêtre sélectionnée">${ts.filter((t) => (t.kind === 'Velux') === !!f.velux).map((t) => `<option value="${esc(t.id)}"${t.id === f.typeId ? ' selected' : ''}>${esc(t.id)} — ${fmt(t.l)} × ${fmt(t.h)}</option>`).join('')}</select> ${esc(f.facade)} <button type="button" class="ghost sm" id="w-del">Supprimer</button></div>` : ''}
     <p class="note" style="margin:6px 0 0">Clic sur une façade (fenêtre, porte : posée au ±0.00 si proche) ou sur un pan de toit (velux) : poser · glisser une fenêtre : déplacer (alignement automatique sur les autres) · Ctrl + glisser : dupliquer · Suppr : effacer · Ctrl+Z : annuler</p>`;
   $('w-type').onchange = (e) => { T3.wType = e.target.value; };
   $('w-end').onclick = () => setWinMode(false);
@@ -5561,6 +5568,19 @@ function renderWinPanel(){
   $('w-new').onclick = () => { const k = $('w-nk').value, d = WDEF[k], l = parseFloat($('w-nl').value) || d[0], h = parseFloat($('w-nh').value) || d[1]; const t = wtNew(k, l, h); T3.wType = t.id; wChanged(); renderWinPanel(); };
   box.querySelectorAll('[data-wk]').forEach((b) => { b.onclick = () => { const k = b.dataset.wk; let t = WT().find((x) => x.kind === k); if(!t){ const d = WDEF[k]; t = wtNew(k, d[0], d[1]); wChanged(); } T3.wType = t.id; renderWinPanel(); }; });
   if($('w-del')) $('w-del').onclick = () => wDelete();
+  $('w-edit').ontoggle = (e) => { T3.wEditOpen = e.target.open; };
+  $('w-edit').onchange = (e) => { const tr = e.target.closest('[data-wt]'), k = e.target.dataset.k; if(!tr || !k) return; const t = WT()[+tr.dataset.wt]; if(!t) return;
+    if(k === 'id'){ const v = e.target.value.trim(); if(!v || WT().some((x) => x !== t && x.id === v)){ e.target.value = t.id; hint3('Nom vide ou déjà utilisé.'); return; }
+      const old = t.id; t.id = v; (S.extra.fenetres || []).forEach((x) => { if(x.typeId === old) x.typeId = v; });
+      const q = S.extra.wqty || {}; Object.keys(q).forEach((qk) => { if(qk.startsWith(old + '|')){ q[v + qk.slice(old.length)] = q[qk]; delete q[qk]; } }); if(T3.wType === old) T3.wType = v; }
+    else if(k === 'kind') t.kind = e.target.value;
+    else { const v = parseFloat(String(e.target.value).replace(',', '.')); if(!(v > 0)) { e.target.value = t[k]; return; } t[k] = v; }
+    wChanged(); renderWinPanel(); build3D(); };
+  $('w-edit').onclick = (e) => { const d = e.target.closest('[data-wtdel]'); if(!d) return; const t = WT()[+d.dataset.wtdel]; if(!t) return;
+    const n = (S.extra.fenetres || []).filter((x) => x.typeId === t.id).length; if(n && !confirm(`Supprimer le type ${t.id} et ses ${n} fenêtre(s) ?`)) return;
+    WT().splice(+d.dataset.wtdel, 1); Object.keys(S.extra.wqty || {}).forEach((qk) => { if(qk.startsWith(t.id + '|')) delete S.extra.wqty[qk]; }); if(T3.wType === t.id) T3.wType = null;
+    wChanged(); renderWinPanel(); build3D(); };
+  if($('w-sel-type')) $('w-sel-type').onchange = (e) => { const w = (S.extra.fenetres || []).find((x) => x.uid === T3.wsel); if(!w) return; w.typeId = e.target.value; wChanged(); renderWinPanel(); build3D(); hint3(`Fenêtre passée en ${w.typeId}.`); };
 }
 function wDelete(){ if(!T3 || !T3.wsel) return; const u = T3.wsel; S.extra.fenetres = S.extra.fenetres.filter((x) => x.uid !== u);
   S.plans.forEach((p) => { p.measures = p.measures.filter((m) => m.uid !== u); }); T3.wsel = null; hint3('Fenêtre supprimée (Ctrl+Z pour annuler).'); renderWinPanel(); wChanged(); renderList(); draw(); }
