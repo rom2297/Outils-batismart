@@ -2641,7 +2641,7 @@ function tBat(o) {
     <label class="f">Catégorie (barème)<select data-bind="batiment.categorie">${Object.entries(CAT_LABEL).map(([k, l]) => `<option value="${k}" ${b.categorie === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     ${F('Nombre de logements', 'batiment.logements', b.logements, 'number')}
     <label class="f">SRE [m²] ${b.sreSource ? `<span class="badge ${/Estimation/.test(b.sreSource) ? '' : 'ok'}">${esc(b.sreSource)}</span>` : ''}<input type="number" step="any" data-type="num" data-bind="batiment.sre" value="${b.sre || ''}"></label>
-    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${hauteurField(b)}<label class="f">Patrimoine (note recensement 1 à 7)<select data-bind="batiment.patrimoine">${['', '1', '2', '3', '4', '5', '6', '7'].map((x) => `<option value="${x}" ${String(b.patrimoine ?? '') === x ? 'selected' : ''}>${x ? 'Note ' + x + (+x <= 4 ? ' – protégé' : '') : 'non recensé / inconnu'}</option>`).join('')}</select></label>${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
+    ${F('Surface au sol [m²]', 'batiment.surfaceSol', b.surfaceSol, 'number')}${F('Niveaux', 'batiment.niveaux', b.niveaux, 'number')}${hauteurField(b)}<label class="f">Patrimoine (note recensement 1 à 7) ${b.patrimoineSrc ? `<span class="badge ${b.patrimoineSrc.startsWith('recensement') ? 'ok' : ''}">${esc(b.patrimoineSrc)}</span>` : ''}${b.E && (b.canton || 'VD') === 'VD' ? ` <button type="button" class="btn sm ghost" data-act="patriVD" data-id="${o.id}" title="Lire la note au recensement architectural vaudois (géoservice de l'État de Vaud)">🏛 Rechercher</button> <a class="note" target="_blank" rel="noopener" href="${esc(patriVDLink(b))}">guichet VD ↗</a>` : ''}<select data-bind="batiment.patrimoine">${['', '1', '2', '3', '4', '5', '6', '7'].map((x) => `<option value="${x}" ${String(b.patrimoine ?? '') === x ? 'selected' : ''}>${x ? 'Note ' + x + (+x <= 4 ? ' – protégé' : '') : 'non recensé / inconnu'}</option>`).join('')}</select></label>${F('Année de construction', 'batiment.annee', b.annee || b.periode)}
     ${F('Classe RegBL', 'batiment.classe', b.classe)}${F('Chauffage', 'batiment.chauffage', [b.chauffage, b.agent].filter(Boolean).join(' · '))}${F('Info chauffage mise à jour', 'batiment.chauffageMaj', b.chauffageMaj)}
     ${F('Commune', 'batiment.commune', b.commune)}${F('Canton', 'batiment.canton', b.canton)}${F('Parcelle', 'batiment.parcelle', b.parcelle)}</div>
     <h3 style="margin-top:16px">Déplacement</h3>
@@ -2791,7 +2791,8 @@ async function geoPick(c) {
   if (b.neuf) { if (c.canton) b.canton = c.canton; b.egid = ''; }
   try { if (c.egid && !b.neuf) { const rb = await geoRegbl(c.egid); if (rb) Object.assign(b, rb, { adresse: c.label, rue: rb.rue || sp.rue, localitePost: rb.localitePost || sp.localite }); } } catch (e) { st.textContent = 'RegBL indisponible : ' + e.message; }
   try { await computeTrajets(b); } catch (e) { /* */ }
-  if (!o.projet.adresse) o.projet.adresse = c.label;
+  o.projet.adresse = c.label;
+  if (b.canton === 'VD' && !b.neuf) { st.textContent = 'Recherche au recensement architectural vaudois…'; await patrimoineVD(b); }
   if (o.type === 'EN' && ['VD', 'FR', 'NE', 'VS'].includes(b.canton)) o.options.canton = b.canton;
   hist(o, 'Bâtiment', `${c.label}${b.egid ? ' · EGID ' + b.egid : ''}`);
   touch(o, true); await saveOffre(o); render(); toast('Données du bâtiment importées');
@@ -3004,6 +3005,8 @@ async function onClick(e) {
     case 'new': startWizard(); break;
     case 'newForClient': startWizard(S.param); break;
     case 'dup': duplicate(a.dataset.id); break;
+    case 'patriVD': { const o = byId; if (!o) break; toast('Recherche au recensement architectural…'); const r = await patrimoineVD(o.batiment); touch(o, false); await saveOffre(o); render();
+      toast(r && r.ok ? (o.batiment.patrimoine ? `Note ${o.batiment.patrimoine} au recensement architectural` : 'Bâtiment non recensé') : 'Géoservice VD inaccessible – vérifier sur le guichet VD'); break; }
     case 'cliFromBat': { const o = byId; if (!o) break; const b = o.batiment, sp = splitAdresse(b.adresse);
       o.client.adresse = sp.rue || b.rue || ''; o.client.npa = sp.npa || ''; o.client.localite = b.localitePost || sp.localite || '';
       touch(o, false); await saveOffre(o); render(); toast("Adresse du bâtiment reprise pour le client"); break; }
@@ -3106,6 +3109,53 @@ async function createLinked(src, p) {
   rebuild(n); await saveOffre(n);
   hist(root, 'Offre liée', `n° ${n.numero} (${p.n})`); await saveOffre(root);
   toast(`Offre ${n.numero} créée`); VIEW.tab = 'prest'; location.hash = '#/offre/' + n.id;
+}
+
+/* ============================================================ patrimoine : note au recensement architectural vaudois (1 à 7)
+   Géoservice de l'État de Vaud (ArcGIS Server, couches vd.batiment_recense / vd.objet_recense).
+   1) REST identify en JSONP (pas de blocage CORS)  2) WMS GetFeatureInfo  3) sinon lien vers le guichet cartographique */
+const VD_OGC = 'https://www.ogc.vd.ch/public';
+function patriVDLink(b) { return `https://www.geo.vd.ch/?center=${Math.round(b.E || 2539000)},${Math.round(b.N || 1160000)}&scale=1000&wkid=2056&theme=asitvd_couleur&mapresources=GEOVD_DONNEESCADASTRALES,GEO_THEME_PAT,GEOVD_DONNEESBASE`; }
+function jsonp(url, ms = 9000) {
+  return new Promise((res, rej) => { const cb = '__jp' + Math.random().toString(36).slice(2), sc = document.createElement('script');
+    const end = () => { delete window[cb]; sc.remove(); clearTimeout(t); };
+    const t = setTimeout(() => { end(); rej(new Error('délai dépassé')); }, ms);
+    window[cb] = (d) => { end(); res(d); }; sc.onerror = () => { end(); rej(new Error('service inaccessible')); };
+    sc.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb; document.head.appendChild(sc); });
+}
+/* cherche une note 1–7 dans les attributs d'un objet recensé */
+function noteFrom(attrs) {
+  const ks = Object.keys(attrs || {});
+  const k = ks.find((x) => /^note(_?recens\w*)?$/i.test(x)) || ks.find((x) => /note/i.test(x) && !/date|rem|comment|txt|desc/i.test(x)) || ks.find((x) => /valeur|recens/i.test(x));
+  const v = k != null ? String(attrs[k]).match(/\b([1-7])\b/) : null;
+  return v ? +v[1] : null;
+}
+async function patrimoineVD(b) {
+  if (!b || !b.E || !b.N) return null;
+  const E = +b.E, N = +b.N, d = 40;
+  const set = (note, src) => { b.patrimoine = note == null ? '' : String(note); b.patrimoineSrc = src; b.patrimoineDate = today(); return { ok: true, note }; };
+  // 1) ArcGIS REST identify (JSONP)
+  try {
+    const q = new URLSearchParams({ geometry: `${E},${N}`, geometryType: 'esriGeometryPoint', sr: '2056', layers: 'all', tolerance: '3', mapExtent: `${E - d},${N - d},${E + d},${N + d}`, imageDisplay: '400,400,96', returnGeometry: 'false', f: 'json' });
+    const j = await jsonp(`${VD_OGC}/rest/services/OGC/wmsVD/MapServer/identify?${q}`);
+    if (j && Array.isArray(j.results)) {
+      const hits = j.results.filter((r) => /recens|objet_rec|batiment_rec/i.test(r.layerName || ''));
+      const notes = hits.map((r) => noteFrom(r.attributes)).filter((n) => n != null);
+      return set(notes.length ? Math.min(...notes) : null, notes.length ? 'recensement VD' : 'recensement VD : non recensé');
+    }
+  } catch (e) { /* on tente le WMS */ }
+  // 2) WMS GetFeatureInfo
+  for (const fmt of ['application/geojson', 'application/json', 'text/xml', 'text/html', 'text/plain']) {
+    try {
+      const q = new URLSearchParams({ SERVICE: 'WMS', VERSION: '1.3.0', REQUEST: 'GetFeatureInfo', LAYERS: 'vd.batiment_recense,vd.objet_recense', QUERY_LAYERS: 'vd.batiment_recense,vd.objet_recense', STYLES: ',', CRS: 'EPSG:2056', BBOX: `${E - d},${N - d},${E + d},${N + d}`, WIDTH: '101', HEIGHT: '101', I: '50', J: '50', INFO_FORMAT: fmt, FEATURE_COUNT: '10' });
+      const r = await fetch(`${VD_OGC}/services/OGC/wmsVD/Mapserver/WMSServer?${q}`); if (!r.ok) continue;
+      const txt = await r.text(); let note = null, empty = false;
+      if (/json/.test(fmt)) { try { const g = JSON.parse(txt); const fs = g.features || []; empty = !fs.length; const ns = fs.map((f) => noteFrom(f.properties || f.attributes)).filter((n) => n != null); if (ns.length) note = Math.min(...ns); } catch (e) { continue; } }
+      else { const plain = txt.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), m = plain.match(/note[^0-9]{0,30}?\b([1-7])\b/i); if (m) note = +m[1]; else empty = !/recens/i.test(txt) || /no features|aucun/i.test(txt); }
+      if (note != null || empty) return set(note, note != null ? 'recensement VD' : 'recensement VD : non recensé');
+    } catch (e) { /* format suivant */ }
+  }
+  b.patrimoineSrc = 'à vérifier sur le guichet VD'; return { ok: false };
 }
 </script>
 <script data-goatcounter="https://outils-batismart.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
