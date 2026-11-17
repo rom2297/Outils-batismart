@@ -431,6 +431,9 @@ body.noscroll{overflow:hidden}
       <div class="actions" style="margin-top:8px;align-items:center"><label class="note" title="Profondeur de l'embrasure extérieure (vitrage → nu de façade). Vide : déduite de la composition du mur (épaisseur − 15 cm), sinon 30 cm avant 1930, 20 cm ensuite">Embrasure <input type="number" id="cb-reveal" min="0" max="80" step="1" style="width:60px" placeholder="auto"> cm</label><button type="button" class="ghost" id="cb-shade">Calculer l'ombrage (relief, voisins, débords, embrasures)</button><span class="note" id="cb-shade-st"></span></div>
       <div class="tablewrap" id="cb-shade-box" hidden><table class="edit" id="cb-shade-t"><thead><tr><th>Fenêtre</th><th>Façade</th><th>Niveau</th><th class="n">l × h m</th><th class="n">Horizon °</th><th class="n">Embr. cm</th><th class="n">Direct reçu</th><th class="n">Ciel visible</th><th class="n">Ombrage F<sub>S</sub></th></tr></thead><tbody></tbody></table></div>
       <p class="note" id="cb-shade-note" hidden>Calcul géométrique sur la 3D (pas les tableaux SIA 380/1) : course du soleil d'octobre à avril (ciel clair), voûte céleste devant chaque fenêtre (diffus isotrope, 55 % du global), obstacles = relief (swissALTI3D jusqu'à 8 km, courbure terrestre), bâtiments à moins de 120 m, le bâtiment lui-même, ses débords de toiture et l'embrasure de chaque fenêtre (linteau et tableaux). Arbres, balcons et stores ne sont pas modélisés. F<sub>S</sub> = rayonnement reçu avec obstacles / sans obstacle ; la colonne Ombrage du CECB reçoit la moyenne pondérée par la surface de chaque ligne Fe. Fenêtres de toit : non calculées.</p>
+      <h2 style="margin-top:18px">Ponts thermiques</h2>
+      <div class="tablewrap"><table class="edit" id="cb-pt"><thead><tr><th></th><th>Type CECB</th><th>Dénomination</th><th class="n" title="Calculée sur la 3D ; tapez une valeur pour la remplacer">Longueur m</th><th class="n" title="Valeur par défaut selon l'isolation des murs ; modifiable">Ψ W/(mK)</th><th class="n">b</th></tr></thead><tbody></tbody></table></div>
+      <p class="note" id="cb-pt-note">Longueurs tirées de la 3D : <b>embrasures</b> = périmètre de chaque fenêtre et porte (velux à part), <b>pied de façade</b> = longueur des façades extérieures au niveau du sol, <b>toiture</b> = raccord toit / murs (rampants des pignons inclus). Ψ par défaut selon l'isolation des murs (non isolé, isolé intérieur / double mur, isolation extérieure) : valeurs courantes, à adapter au détail (catalogue des ponts thermiques OFEN). Exportés dans l'onglet « Ponts thermiques » de l'outil CECB.</p>
       <div class="actions" style="margin-top:16px;align-items:center"><button type="button" id="cb-export">Exporter vers l'outil CECB</button><button type="button" class="ghost" id="cb-file">Choisir le fichier CECB…</button><span class="note" id="cb-fname"></span></div>
       <p class="note">Dans l'outil CECB : « Générer template excel » pour ce bâtiment, puis choisissez ce fichier ici. Le fichier rempli (…_metre3D.xls) se réimporte dans l'outil CECB. État, priorité et installations techniques restent à saisir dans l'outil CECB.</p>
     </section>
@@ -2195,7 +2198,7 @@ body.noscroll{overflow:hidden}
 
   // ------------------------------------------------------------ remplissage
   const ORI = { 'Nord': 'N', 'Nord-Est': 'NE', 'Est': 'E', 'Sud-Est': 'SE', 'Sud': 'S', 'Sud-Ouest': 'SO', 'Ouest': 'O', 'Nord-Ouest': 'NO' };
-  const SHEETS = { projet: 'Projet', aff: 'Affectations du bâtiment', toit: 'Toits et plafonds', mur: 'Murs', fen: 'Fenêtres et portes', sol: 'Sols' };
+  const SHEETS = { projet: 'Projet', aff: 'Affectations du bâtiment', toit: 'Toits et plafonds', mur: 'Murs', fen: 'Fenêtres et portes', sol: 'Sols', pt: 'Ponts thermiques' };
   const r2 = (x) => Math.round(x * 100) / 100;
 
   let EDITS = null;
@@ -2308,6 +2311,10 @@ body.noscroll{overflow:hidden}
       [['G', 'U', 'U'], ['H', 'g', 'g'], ['I', 'b', 'b'], ['J', 'fv', 'proportion vitrée'], ['K', 'fs', 'ombrage']].forEach(([col, key, lab]) => { const x = key === 'fs' && fsLine != null ? fsLine : num(v[key]); if (x != null) set(F, col + r, x); else miss.push(`${code} ${lab}`); });
     }));
     rep.written.fenetres = i;
+    // --- Ponts thermiques (d.pts = [{ type, name, L, psi, b }]) : lignes 8 à 24
+    if (d.pts && wb.Sheets[SHEETS.pt]) { const PT = sheet(wb, 'pt'); rep.replaced.ponts = clearTable(PT, 8, 9);
+      d.pts.slice(0, 17).forEach((x, k) => { const r = 8 + k; set(PT, 'A' + r, `Pt-${k + 1}`); set(PT, 'B' + r, x.name); set(PT, 'C' + r, x.type); set(PT, 'E' + r, r2(x.L)); set(PT, 'F' + r, x.psi); set(PT, 'H' + r, 1); set(PT, 'I' + r, x.b); });
+      rep.written.ponts = Math.min(17, d.pts.length); }
     if (!lines.some((x) => x.kind === 'sol')) rep.notes.push('Aucun sol dans l\'enveloppe.');
     if (!(ex.fenetres || []).length) rep.notes.push('Aucune fenêtre saisie.');
     if (!(sre > 0)) rep.notes.push('SRE non saisie : Projet!B30 laissé tel quel.');
@@ -2699,7 +2706,8 @@ async function dlCecb(){
   try{
     if(typeof XLSX === 'undefined' || !XLSX.CFB) throw new Error('lecteur Excel non chargé (connexion au CDN cdnjs ?)');
     status('Remplissage du fichier CECB…');
-    const DC = window.cecbData(); const dd = { meta:S.meta, res:S.res, extra:S.extra, groups:C.groupsOf(S.res), sector:C.sector, lines:DC.lines, wins:DC.wins, th:S.extra.th || {}, defB:C.defB };
+    const DC = window.cecbData(); const PTR = ptCalc(), dd = { meta:S.meta, res:S.res, extra:S.extra, groups:C.groupsOf(S.res), sector:C.sector, lines:DC.lines, wins:DC.wins, th:S.extra.th || {}, defB:C.defB,
+      pts: PTR ? PTR.rows.filter((r) => r.on && r.L > 0).map((r) => ({ type: r.type, name: r.name, L: r.L, psi: r.psiV, b: r.bV })) : [] };
     const pre = CECBExport.buildCecbFile(S.cecbBuf, dd).rep;
     if(pre.missing && pre.missing.length && !confirm(`Valeurs obligatoires manquantes pour l'import CECB (${pre.missing.length}) :\n\n${pre.missing.slice(0, 25).join(', ')}${pre.missing.length > 25 ? '…' : ''}\n\nSaisie : onglet 4 (U, b, fenêtres) et onglet 2 (occupation). L'outil CECB refusera l'import tant qu'elles manquent.\n\nExporter quand même ?`)){ status('Export CECB annulé : complétez les valeurs manquantes (onglet 4 Enveloppe 3D, onglet 2 Réglages).'); return; }
     const { out, rep } = CECBExport.buildCecbFile(S.cecbBuf, dd);
@@ -5179,6 +5187,44 @@ function cecbMissing(DC){
   const k = S.meta && S.meta.regbl && S.meta.regbl.raw ? S.meta.regbl.raw.gklas : null; m.aff = !!t.aff || k === 1110 || k === 1122;
   m.n = m.ub + m.win + (m.occ ? 0 : 1) + (m.aff ? 0 : 1); return m;
 }
+// ============================================================ ponts thermiques : longueurs sur la 3D, Ψ par défaut selon l'isolation des murs
+const PTDEF = [ // [U mur max, embrasure, socle, toiture, libellé]
+  [0.30, 0.10, 0.30, 0.05, 'isolation extérieure'], [0.80, 0.15, 0.40, 0.15, 'isolation intérieure / double mur'], [99, 0.05, 0.15, 0.10, 'mur non isolé'] ];
+function ptCalc(){
+  if(!S.res) return null; const DC = cecbData(), res = S.res, L = (TH().line) || {};
+  // U moyen des murs extérieurs (pondéré)
+  let su = 0, sa = 0; DC.lines.forEach((l) => { if(l.kind === 'mur' && /^Mur extérieur|^Façade ventilée/.test(l.type)){ const u = (L[l.lk] || {}).U; if(u > 0){ su += u * l.net; sa += l.net; } } });
+  const uw = sa ? su / sa : null, def = PTDEF.find((x) => (uw ?? 1) <= x[0]);
+  // fenêtres / portes : périmètres
+  let pf = 0, pv = 0, nf = 0, nv = 0; (DC.wins || []).forEach((w) => { if(w.out || !(w.f.l > 0 && w.f.h > 0)) return; const n = w.f.nombre || 1, per = 2 * (w.f.l + w.f.h) * n;
+    if(/^Pan /.test(w.f.facade || '') || w.f.velux) { pv += per; nv += n; } else { pf += per; nf += n; } });
+  // façades extérieures : bas (socle) et haut (raccord toiture)
+  const extE = new Set(), gab = new Set(); DC.pieces.forEach((p) => { if(p.kind !== 'mur' || !(p.edge >= 0)) return; if(/^Mur extérieur|^Façade ventilée/.test(p.type)) extE.add(p.edge); if(/\|pignon\|/.test(p.key)) gab.add(p.edge); });
+  const sl = res.pans.filter((p) => p.az != null && p.tilt > 3), tilt = sl.length ? sl.reduce((a, p) => a + p.tilt * p.A, 0) / sl.reduce((a, p) => a + p.A, 0) : 0;
+  let ls = 0, lt = 0; res.edges.forEach((e, i) => { if(!extE.has(i)) return; ls += e.L; lt += gab.has(i) && tilt > 3 ? e.L / Math.cos(tilt * Math.PI / 180) : e.L; });
+  const bOf = (pred) => { const l = DC.lines.find(pred); if(!l) return 1; const v = thOf(l).b; return v != null ? v : (C.defB(l) ?? 0.8); };
+  const bSol = bOf((l) => l.kind === 'sol'), bToit = bOf((l) => l.kind === 'toit' || l.kind === 'plafond');
+  const o = S.extra.pt = S.extra.pt || {};
+  const rows = [
+    { k: 'fen', type: 'Butée de fenêtre', name: `Embrasures fenêtres et portes (${nf} pces)`, Lc: pf, psi: def[1], b: 1 },
+    { k: 'vel', type: 'Butée de fenêtre', name: `Embrasures velux (${nv} pces)`, Lc: pv, psi: 0.10, b: 1 },
+    { k: 'soc', type: 'Socle du bâtiment', name: 'Pied de façade (socle)', Lc: ls, psi: def[2], b: bSol },
+    { k: 'toi', type: 'Toit/mur extérieur', name: `Raccord toiture / murs${gab.size && tilt > 3 ? ' (rampants inclus)' : ''}`, Lc: lt, psi: def[3], b: bToit } ];
+  rows.forEach((r) => { const u = o[r.k] || {}; r.L = u.L ?? r.Lc; r.psiV = u.psi ?? r.psi; r.bV = u.b ?? r.b; r.on = u.on !== false && r.L > 0; });
+  return { rows, uw, def };
+}
+function renderPt(){
+  const tb = $('cb-pt') && $('cb-pt').tBodies[0]; if(!tb) return; const R = ptCalc(); if(!R){ tb.innerHTML = ''; return; }
+  tb.innerHTML = R.rows.map((r) => `<tr data-pt="${r.k}"><td><input type="checkbox" data-k="on" ${r.on ? 'checked' : ''} ${r.Lc > 0 || (S.extra.pt[r.k] || {}).L > 0 ? '' : 'disabled'} aria-label="Exporter"></td><td>${esc(r.type)}</td><td>${esc(r.name)}</td>
+    <td class="n"><input type="number" step="0.1" min="0" data-k="L" style="width:80px" value="${(S.extra.pt[r.k] || {}).L ?? ''}" placeholder="${fmt(r.Lc, 1)}"></td>
+    <td class="n"><input type="number" step="0.01" data-k="psi" style="width:70px" value="${(S.extra.pt[r.k] || {}).psi ?? ''}" placeholder="${r.psi}"></td>
+    <td class="n"><input type="number" step="0.01" min="0" max="1" data-k="b" style="width:60px" value="${(S.extra.pt[r.k] || {}).b ?? ''}" placeholder="${fmt(r.b, 2)}"></td></tr>`).join('');
+  const tot = R.rows.filter((r) => r.on).reduce((a, r) => a + r.L * r.psiV * r.bV, 0);
+  $('cb-pt-note').dataset.tot = tot; const st = $('cb-pt-st') || Object.assign(document.createElement('p'), { id: 'cb-pt-st', className: 'note' }); $('cb-pt-note').before(st);
+  st.innerHTML = `Total exporté : <b>${fmt(tot, 1)} W/K</b> (Σ L·Ψ·b) · murs ${R.uw != null ? `U moyen ${fmt(R.uw, 2)} → Ψ par défaut « ${R.def[4]} »` : 'sans U → Ψ « mur non isolé »'}`;
+}
+document.addEventListener('change', (e) => { const tr = e.target.closest && e.target.closest('#cb-pt tr[data-pt]'); if(!tr) return; const k = e.target.dataset.k, o = S.extra.pt = S.extra.pt || {}, x = o[tr.dataset.pt] = o[tr.dataset.pt] || {};
+  if(k === 'on') x.on = e.target.checked; else { const v = numIn(e.target.value); if(v == null) delete x[k]; else x[k] = v; } renderPt(); undoLater(); });
 function renderCecbTab(){
   const DC = S.res ? cecbData() : null; if(!DC){ $('cb-check').innerHTML = '<span class="ko">Analysez d\'abord un bâtiment (onglet 1)</span>'; return; }
   const m = cecbMissing(DC), sre = Object.values(S.extra.sre || {}).filter((r) => r && r.s > 0 && (r.statut || 'Chauffé') === 'Chauffé').reduce((s, r) => s + r.s, 0);
@@ -5186,7 +5232,7 @@ function renderCecbTab(){
   $('cb-check').innerHTML = it(!!S.cecbBuf, S.cecbBuf ? 'Fichier CECB chargé' : 'Fichier CECB à choisir') + it(m.aff, 'Type d\'affectation') + it(m.occ, 'Occupation') +
     it(!m.ub, m.ub ? `${m.ub} valeur(s) U / b` : 'U et b de l\'enveloppe') + it(!m.win, m.win ? `${m.win} valeur(s) fenêtres / portes` : 'Fenêtres et portes') +
     `<span class="${sre > 0 ? 'ok' : ''}" title="Onglet 2 Réglages › SRE">${sre > 0 ? 'SRE ' + fmt(sre) + ' m²' : 'SRE non saisie (onglet 2)'}</span>`;
-  $('cb-aff').value = TH().aff || ''; renderUcat(); renderUcomp();
+  $('cb-aff').value = TH().aff || ''; renderUcat(); renderUcomp(); try { renderPt(); } catch(ex){ console.warn('ponts thermiques', ex); }
   const rb = (S.meta && S.meta.regbl) || {}, raw = rb.raw || {};
   $('cb-proj').innerHTML = [['Adresse', S.meta && S.meta.label], ['EGID', S.meta && S.meta.egid], ['Parcelle', raw.lparz], ['Année', raw.gbauj || rb.periode], ['Catégorie RegBL', rb.classe], ['Altitude', S.res ? Math.round(S.res.tMean) + ' m' : null]]
     .filter((x) => x[1] != null && x[1] !== '').map(([k, v]) => `<dt>${k}</dt><dd>${esc(String(v))}</dd>`).join('');
