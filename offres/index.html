@@ -1478,7 +1478,8 @@ function devisTable(b, o) {
 function h1(text, pageBreak) { return { text, headlineLevel: 1, fontSize: 15, bold: true, margin: [0, 10, 0, 8], ...(pageBreak ? { pageBreak: 'before', pageOrientation: 'portrait' } : {}) }; }
 function bpaFields() {
   const ln = (label, w) => ({ columns: [{ text: label, width: 'auto' }, { canvas: [{ type: 'line', x1: 4, y1: 11, x2: w, y2: 11, lineWidth: 0.6 }], width: '*' }], margin: [0, 10, 0, 0] });
-  return [ln('Nom, Prénom :', 330), ln('Adresse de facturation :', 290),
+  const two = (a, wa, b2, wb, m) => ({ columns: [{ columns: [{ text: a, width: 'auto' }, { canvas: [{ type: 'line', x1: 4, y1: 11, x2: wa, y2: 11, lineWidth: 0.6 }], width: '*' }] }, { columns: [{ text: b2, width: 'auto' }, { canvas: [{ type: 'line', x1: 4, y1: 11, x2: wb, y2: 11, lineWidth: 0.6 }], width: '*' }] }], columnGap: 20, margin: m });
+  return [ln('Nom, Prénom :', 330), ln('Adresse de facturation :', 290), two('E-mail :', 150, 'Téléphone :', 135, [0, 10, 0, 0]),
     { columns: [{ columns: [{ text: 'Lieu et date :', width: 'auto' }, { canvas: [{ type: 'line', x1: 4, y1: 11, x2: 130, y2: 11, lineWidth: 0.6 }], width: '*' }] }, { columns: [{ text: 'Signature :', width: 'auto' }, { canvas: [{ type: 'line', x1: 4, y1: 11, x2: 140, y2: 11, lineWidth: 0.6 }], width: '*' }] }], columnGap: 20, margin: [0, 10, 0, 18] }];
 }
 /* chaque titre reste sur la même page que tout son contenu : on marque les sections (id) et pageBreakBefore
@@ -1544,7 +1545,7 @@ function buildDocDef(o) {
     const bl = p.blocks.map((id) => blocksIn.find((b) => b.id === id)).filter(Boolean); if (!bl.length) continue;
     content.push({ ...addrBlock(o), pageBreak: 'before', pageOrientation: 'portrait' });
     content.push({ text: p.title, fontSize: 14, bold: true, margin: [0, 24, 0, 8] });
-    content.push({ text: p.resume ? "Par votre signature vous validez l'offre mentionnée. En voici un résumé, l'offre mentionnée fait foi." : "Par votre signature vous validez l'offre mentionnée.", margin: [0, 0, 0, 8] });
+    content.push({ text: "Par votre signature vous validez l'offre mentionnée. En voici un résumé, l'offre mentionnée fait foi.", margin: [0, 0, 0, 8] });
     bl.forEach((b) => content.push(...devisTable(b, o)));
     if (p.options) {
       content.push({ text: 'Options', bold: true, margin: [0, 2, 0, 1] });
@@ -1552,7 +1553,7 @@ function buildDocDef(o) {
       p.options.forEach((x) => content.push({ columns: [{ canvas: [{ type: 'rect', x: 0, y: 2, w: 8, h: 8, lineWidth: 0.7 }], width: 14 }, { text: x, fontSize: 9.5 }], margin: [0, 0.5, 0, 0.5] }));
     }
     content.push({ stack: [...bpaFields(),
-      { text: `Merci de nous retourner cette offre signée par courrier ou par courriel à l'adresse suivante : ${st.societe}, ${st.adresse}, ${st.npa} ${st.localite}, ${st.email}`, margin: [0, 0, 0, 7] },
+      { text: 'Merci de nous retourner cette offre signée par courrier ou par courriel.', margin: [0, 0, 0, 7] },
       { text: "N'hésitez pas à nous contacter pour toute question et merci pour votre confiance." }], unbreakable: true });
   }
   return {
@@ -1626,7 +1627,7 @@ function dxColRuns(cols, ctx, f) {
     if (c.columns) r = dxColRuns(c.columns, ctx, f);
     else if (c.canvas) r = c.canvas.map((s) => (s.type === 'rect' ? dxRuns('☐ ', f) : dxRuns('_'.repeat(Math.max(6, Math.round((s.x2 - s.x1) / 4.6))), f))).join('');
     else if (c.text !== undefined) r = dxRuns(c.text, dxFont(c, { f }));
-    return (i && cols[i - 1].canvas && !c.canvas ? dxRuns('     ', f) : '') + r + (c.text !== undefined && cols[i + 1] && cols[i + 1].canvas ? dxRuns(' ', f) : '');
+    return (i && (cols[i - 1].canvas || cols[i - 1].columns) && !c.canvas ? dxRuns('     ', f) : '') + r + (c.text !== undefined && cols[i + 1] && cols[i + 1].canvas ? dxRuns(' ', f) : '');
   }).join('');
 }
 
