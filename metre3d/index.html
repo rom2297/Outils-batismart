@@ -4231,7 +4231,7 @@ function build3D(){
       const c = (u, v) => { const x = p3.E + rd[0] * u + sd[0] * v, y = p3.N + rd[1] * u + sd[1] * v, z = faceZ(p3.pi, x, y); return P([x, y, (z != null ? z : p3.Z) + 0.04], 0); };
       const A = c(-f.l / 2, hp / 2), B = c(f.l / 2, hp / 2), C2 = c(f.l / 2, -hp / 2), D = c(-f.l / 2, -hp / 2);
       const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3));
-      const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      const on = T3.wsel === f.uid, sameT = !on && T3.wselType && f.typeId === T3.wselType, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : sameT ? '#ffb347' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
       wm.userData.win = f.uid; g.add(wm); T3.winPick.push(wm);
       wm.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v))), new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
       nWin += f.nombre || 1; return; }
@@ -4239,7 +4239,7 @@ function build3D(){
       const q = f.posw, rd = [q.ny, -q.nx], c = (u, v) => P([q.E + rd[0] * u + q.nx * 0.04, q.N + rd[1] * u + q.ny * 0.04, q.Z + v], 0);
       const A = c(-f.l / 2, -f.h / 2), B = c(f.l / 2, -f.h / 2), C2 = c(f.l / 2, f.h / 2), D = c(-f.l / 2, f.h / 2);
       const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3));
-      const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+      const on = T3.wsel === f.uid, sameT = !on && T3.wselType && f.typeId === T3.wselType, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : sameT ? '#ffb347' : '#cfeaff'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
       wm.userData.win = f.uid; g.add(wm); T3.winPick.push(wm);
       wm.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v))), new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
       nWin += f.nombre || 1; return; }
@@ -4265,7 +4265,7 @@ function build3D(){
     const A = c(-f.l / 2, zb), B = c(f.l / 2, zb), C2 = c(f.l / 2, zb + f.h), D = c(-f.l / 2, zb + f.h);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute([...A, ...B, ...C2, ...A, ...C2, ...D], 3)); geo.computeVertexNormals();
     const wi = DC && DC.winOf.get(f), inEnv = wi ? !wi.out : C.counted(f, S.extra);
-    const on = T3.wsel === f.uid, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : inEnv ? '#cfeaff' : '#8e979c'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    const on = T3.wsel === f.uid, sameT = !on && T3.wselType && f.typeId === T3.wselType, wm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(on ? '#ffd43b' : sameT ? '#ffb347' : inEnv ? '#cfeaff' : '#8e979c'), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
     wm.userData.win = f.uid; wm.userData.e = e; g.add(wm); T3.winPick.push(wm);
     const fr = new THREE.BufferGeometry().setFromPoints([A, B, C2, D, A].map((v) => new THREE.Vector3(...v)));
     wm.add(new THREE.Line(fr, new THREE.LineBasicMaterial({ color: new THREE.Color(on ? '#e8590c' : '#1c2a33') })));
@@ -5596,15 +5596,21 @@ function setWinMode(on){
 }
 function renderWinPanel(){
   const box = $('d3-win'); if(!T3 || !T3.winMode){ box.innerHTML = ''; return; }
-  const ts = WT(), cur = T3.wType && ts.find((t) => t.id === T3.wType) ? T3.wType : (ts[0] || {}).id; T3.wType = cur;
-  const f = T3.wsel && (S.extra.fenetres || []).find((x) => x.uid === T3.wsel);
+  const ts = WT(), f = T3.wsel && (S.extra.fenetres || []).find((x) => x.uid === T3.wsel);
+  // fenêtre sélectionnée : son type devient le type courant et est mis en évidence (liste, tableau des types, autres fenêtres du même type en 3D)
+  if(f && f.typeId && ts.some((t) => t.id === f.typeId) && T3.wselPrev !== f.uid){ T3.wType = f.typeId; T3.wselPrev = f.uid; }
+  if(!f) T3.wselPrev = null;
+  T3.wselType = f ? f.typeId : null;
+  const cur = T3.wType && ts.find((t) => t.id === T3.wType) ? T3.wType : (ts[0] || {}).id; T3.wType = cur;
   box.innerHTML = `<div class="d3h">Fenêtres <button type="button" class="ghost sm" id="w-end">Terminer</button></div>
     <label for="w-type">Type posé au clic</label><select id="w-type">${ts.map((t) => `<option value="${esc(t.id)}"${t.id === cur ? ' selected' : ''}>${esc(t.id)} — ${esc(t.kind)} ${fmt(t.l)} × ${fmt(t.h)} m</option>`).join('')}</select>
     <div class="row" style="gap:6px;align-items:end;margin-top:4px;flex-wrap:wrap"><select id="w-nk" aria-label="Genre du nouveau type" style="width:96px">${opt(WKINDS, T3.wNk || 'Fenêtre')}</select><input type="number" step="0.01" id="w-nl" placeholder="larg." style="width:64px" aria-label="Largeur nouveau type"><span>×</span><input type="number" step="0.01" id="w-nh" placeholder="haut." style="width:64px" aria-label="Hauteur nouveau type"><button type="button" class="ghost sm" id="w-new">+ type</button></div>
     <div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap">${WKINDS.map((k) => `<button type="button" class="ghost sm" data-wk="${k}">${k === 'Fenêtre' ? '▭' : k === 'Porte' ? '🚪' : '◇'} ${k}</button>`).join('')}</div>
+    ${f ? (() => { const t = ts.find((x) => x.id === f.typeId), n = (S.extra.fenetres || []).filter((x) => x.typeId === f.typeId).reduce((a, x) => a + (x.nombre || 1), 0);
+      return t ? `<div style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(255,179,71,.18);border:1px solid #ffb347;font-size:12px">Type <b style="font-size:14px">${esc(t.id)}</b> — ${esc(t.kind)} ${fmt(t.l)} × ${fmt(t.h)} m · ${n} pce${n > 1 ? 's' : ''} de ce type (en orange sur la 3D)</div>` : ''; })() : ''}
     <details id="w-edit" style="margin-top:6px"${T3.wEditOpen ? ' open' : ''}><summary class="note" style="cursor:pointer">Modifier les types (${ts.length})</summary>
       <div class="wtt" style="margin-top:4px">${ts.map((t, i) => { const n = (S.extra.fenetres || []).filter((x) => x.typeId === t.id).reduce((a, x) => a + (x.nombre || 1), 0);
-        return `<div data-wt="${i}" style="display:flex;gap:3px;align-items:center;margin-bottom:3px;font-size:12px"><input data-k="id" value="${esc(t.id)}" title="Nom du type" style="width:40px;padding:3px;font-weight:700"><select data-k="kind" style="width:74px;padding:3px">${opt(WKINDS, t.kind)}</select><input type="number" step="0.01" min="0.1" data-k="l" value="${t.l}" title="Largeur m" style="width:56px;padding:3px"><span>×</span><input type="number" step="0.01" min="0.1" data-k="h" value="${t.h}" title="Hauteur m" style="width:56px;padding:3px"><span class="note" title="Fenêtres de ce type" style="min-width:18px;text-align:right">${n}</span><button type="button" class="x" data-wtdel="${i}" title="Supprimer ce type et ses fenêtres">×</button></div>`; }).join('')}</div>
+        return `<div data-wt="${i}" style="display:flex;gap:3px;align-items:center;margin-bottom:3px;font-size:12px${f && t.id === f.typeId ? ';background:rgba(255,179,71,.25);outline:1px solid #ffb347;border-radius:4px' : ''}"><input data-k="id" value="${esc(t.id)}" title="Nom du type" style="width:40px;padding:3px;font-weight:700"><select data-k="kind" style="width:74px;padding:3px">${opt(WKINDS, t.kind)}</select><input type="number" step="0.01" min="0.1" data-k="l" value="${t.l}" title="Largeur m" style="width:56px;padding:3px"><span>×</span><input type="number" step="0.01" min="0.1" data-k="h" value="${t.h}" title="Hauteur m" style="width:56px;padding:3px"><span class="note" title="Fenêtres de ce type" style="min-width:18px;text-align:right">${n}</span><button type="button" class="x" data-wtdel="${i}" title="Supprimer ce type et ses fenêtres">×</button></div>`; }).join('')}</div>
       <p class="note" style="margin:2px 0 0">Les fenêtres posées suivent leur type (dimensions, genre) ; renommer garde le lien.</p></details>
     ${f ? `<div class="note" style="margin-top:6px">Sélection : <select id="w-sel-type" aria-label="Type de la fenêtre sélectionnée">${ts.filter((t) => (t.kind === 'Velux') === !!f.velux).map((t) => `<option value="${esc(t.id)}"${t.id === f.typeId ? ' selected' : ''}>${esc(t.id)} — ${fmt(t.l)} × ${fmt(t.h)}</option>`).join('')}</select> ${esc(f.facade)} <button type="button" class="ghost sm" id="w-del">Supprimer</button></div>` : ''}
     <p class="note" style="margin:6px 0 0">Clic sur une façade (fenêtre, porte : posée au ±0.00 si proche) ou sur un pan de toit (velux) : poser · glisser une fenêtre : déplacer (alignement automatique sur les autres) · Ctrl + glisser : dupliquer · Suppr : effacer · Ctrl+Z : annuler</p>`;
