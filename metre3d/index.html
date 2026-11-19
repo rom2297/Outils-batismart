@@ -4746,7 +4746,11 @@ function drawDecomp(g, DC, P, b, res, ink){
   const sel = new Set(T3.sel || []), acc = new THREE.Color(css('--accent'));
   // un élément CECB (même type, même orientation) = un seul objet dessiné : les morceaux (bandes, pignon, retraits) sont fusionnés
   const grp = new Map(), pickGeo = [];
+  // combles froids : surfaces au-dessus (pans, pointes de pignon, murs dans la toiture hors enveloppe) non dessinées
+  const coldOn = S.extra.combles === 'partiels' || S.extra.combles === 'non chauffés';
+  const coldTop = (p) => coldOn && p.type === C.OUT && (p.kind === 'toit' || (p.kind === 'mur' && (p.band === 'pignon' || p.band === 'toiture')));
   const add = (tris, p) => {                   // tris : [[x,y,z]…] par 3
+    if(coldTop(p)) return;
     const ln = DC.lineOf.get(p.key), gk = ln ? ln.lk : 'X|' + p.key;
     const G = grp.get(gk) || { tris: [], keys: [], type: p.type, col: ln ? ln.col : OUT_COL }; G.tris.push(...tris); G.keys.push(p.key); grp.set(gk, G);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
