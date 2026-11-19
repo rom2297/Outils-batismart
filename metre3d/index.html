@@ -2293,7 +2293,9 @@ body.noscroll{overflow:hidden}
     else if (empty(get(A, 'B5'))) { const k = raw.gklas; if (k === 1110) set(A, 'B5', 'Habitat individuel'); else if (k === 1122) set(A, 'B5', 'Habitat collectif'); }
 
     // --- Enveloppe : lignes de la décomposition 3D (d.lines = Metre3D.cecbLines)
-    const subtract = /^oui/i.test(String(get(F, 'C7') || ''));
+    // Surfaces BRUTES (fenêtres comprises) + « Soustraire automatiquement surface de fenêtres » = Oui : l'outil CECB déduit lui-même
+    // les ouvertures de leur élément parent (« Inclus dans ») ; exporter des surfaces nettes ferait une double déduction.
+    set(F, 'C7', 'Oui'); const subtract = true;
     const lines = d.lines || [];
     // Types : texte exact de la liste déroulante de l'outil CECB (onglet DropDownData ; « ≤ 2 m » y contient une espace insécable).
     // Un texte qui ne correspond pas exactement est ignoré à l'import et l'élément retombe sur « Mur extérieur » / « Contre extérieur ».
