@@ -4754,7 +4754,7 @@ function drawDecomp(g, DC, P, b, res, ink){
   const grp = new Map(), pickGeo = [];
   // combles froids : surfaces au-dessus (pans, pointes de pignon, murs dans la toiture hors enveloppe) non dessinées
   const coldOn = S.extra.combles === 'partiels' || S.extra.combles === 'non chauffés';
-  const coldTop = (p) => coldOn && p.type === C.OUT && (p.kind === 'toit' || (p.kind === 'mur' && (p.band === 'pignon' || p.band === 'toiture')));
+  const coldTop = (p) => coldOn && p.type === C.OUT && p.kind === 'mur' && (p.band === 'pignon' || p.band === 'toiture');   // pans de toit froids : transparents (voir flush)
   const add = (tris, p) => {                   // tris : [[x,y,z]…] par 3
     if(coldTop(p)) return;
     const ln = DC.lineOf.get(p.key), gk = ln ? ln.lk : 'X|' + p.key;
@@ -4767,7 +4767,7 @@ function drawDecomp(g, DC, P, b, res, ink){
     const on = G.keys.some((k) => sel.has(k)), geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(G.tris.flat(), 3)); geo.computeVertexNormals();
     const c = new THREE.Color(G.col); if(on) c.lerp(acc, 0.45);
-    const ghost = G.type === C.OUT && !on && G.keys.every((k) => /^T\|.*\|h$/.test(k));   // toit au-dessus du faux-plafond : transparent (on voit le plafond)
+    const ghost = G.type === C.OUT && !on && coldOn && G.keys.every((k) => /^T\|/.test(k));   // toit au-dessus du faux-plafond : transparent (on voit le plafond)
     const mm = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, transparent: ghost, opacity: ghost ? 0.28 : 1, depthWrite: !ghost }));
     mm.userData.el = 1; mm.userData.col = G.col; mm.userData.keys = G.keys; g.add(mm);
     // arêtes : seulement les vrais angles (> 20°) et le contour, pas les jonctions entre morceaux coplanaires
