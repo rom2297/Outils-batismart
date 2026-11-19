@@ -1897,7 +1897,8 @@ body.noscroll{overflow:hidden}
     (res.roofWalls || []).forEach((w, k) => {
       // combles non chauffés : seuls les murs dans la toiture (lucarnes) sont hors enveloppe, pas les murs en retrait des étages
       let wz = Infinity; if (combP && w.roof && w.poly) w.poly.forEach((pg) => pg[0].forEach(([, z]) => { wz = Math.min(wz, z); }));
-      const def = w.split ? 'Contre chauffé' : (combNC && w.roof) || (combP && w.roof && wz >= Hc - 0.05) ? OUT : 'Mur extérieur';
+      const def =  w.split ? 'Contre chauffé' : (combNC && w.roof) || (combP && w.roof && wz >= Hc - 0.05) ? OUT : 'Mur extérieur';
+      const def0 = def;
       // coupes horizontales : murs en retrait découpés comme les façades ; murs dans la toiture d'un seul morceau (comme le pignon)
       let parts = [[`L|${k}`, w, w.area, null]];
       if (cuts.length && w.poly && w.poly.length) {
@@ -1905,8 +1906,13 @@ body.noscroll{overflow:hidden}
         else { const zs = [-big, ...cuts.map((x) => x.z), big]; parts = [];
           for (let j = 0; j < zs.length - 1; j++) { const q = PC.intersection(w.poly, [[[-big, zs[j]], [big, zs[j]], [big, zs[j + 1]], [-big, zs[j + 1]], [-big, zs[j]]]]), A = mpArea(q);
             if (A >= 0.05) parts.push([`L|${k}|z${j}`, Object.assign({}, w, { poly: q, area: A }), A, j]); } } }
-      parts.forEach(([key, pw, A, zk]) => { const zn = zk != null ? zoneName(zk) : null, name = nm(key, zn);
-      P.push({ key, kind: 'mur', edge: -1, band: w.roof ? 'toiture' : 'ressaut', ter: 'hs', orientation: w.orientation, plane: pw, area: A, def, type: adj[key] || def, zone: name, custom: !!(name && name !== zn),
+      // combles partiels : mur en retrait coupé à la cote du faux-plafond, la partie au-dessus est hors enveloppe (combles froids)
+      if (combP && def !== OUT) { const np = []; parts.forEach(([key, pw, A, zk]) => { if (!pw.poly || !pw.poly.length) { np.push([key, pw, A, zk]); return; }
+          let lo = [], hi = []; try { lo = PC.intersection(pw.poly, [[[-big, -big], [big, -big], [big, Hc], [-big, Hc], [-big, -big]]]); hi = PC.difference(pw.poly, [[[-big, -big], [big, -big], [big, Hc], [-big, Hc], [-big, -big]]]); } catch (e) { np.push([key, pw, A, zk]); return; }
+          const al = mpArea(lo), ah = mpArea(hi); if (al >= 0.02) np.push([key, Object.assign({}, pw, { poly: lo, area: al }), al, zk]); if (ah >= 0.02) np.push([key + '|h', Object.assign({}, pw, { poly: hi, area: ah }), ah, zk, true]); });
+        parts = np; }
+      parts.forEach(([key, pw, A, zk, cold]) => { const zn = zk != null ? zoneName(zk) : null, name = nm(key, zn), def = cold ? OUT : def0;
+      P.push({ key, kind: 'mur', edge: -1, band: cold ? 'toiture' : w.roof ? 'toiture' : 'ressaut', ter: 'hs', orientation: w.orientation, plane: pw, area: A, def, type: adj[key] || def, zone: name, custom: !!(name && name !== zn),
         label: (name ? name + ' — ' : '') + (w.split ? `Mur ${w.orientation} sur la limite de séparation (mitoyen)` : w.roof ? `Mur dans la toiture ${w.orientation} (lanterneau / lucarne)`
           : w.low ? `Mur ${w.orientation} en retrait depuis le terrain (entrée, loggia, cour, étage décalé)` : `Mur ${w.orientation} en retrait / au-dessus d'une partie basse`) }); });
     });
