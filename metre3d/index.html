@@ -5101,18 +5101,26 @@ function segNear(ev){
 function plafHit(ev){
   if(!T3 || S.extra.combles !== 'partiels' || !S.res || S.res.plafHc == null || T3.view === 'ori' || T3.winMode || T3.cutMode) return null;
   const hits = ray3(ev).intersectObjects(T3.pick, false).filter((h) => !/^T\|.*\|h$/.test(h.object.userData.key || ''));   // toit froid transparent : on vise à travers
-  const h = hits[0]; return h && /^P\|h/.test(h.object.userData.key) ? h : null; }
+  const h = hits[0]; if(!h) return null; if(/^P\|h/.test(h.object.userData.key)) return h;
+  // pignons et murs : la ligne du faux-plafond s'attrape aussi sur la façade (bande de quelques pixels autour de la cote)
+  const pc = T3.dc && T3.dc.byKey.get(h.object.userData.key);
+  if(pc && pc.kind === 'mur'){ const tol = Math.max(0.15, 0.012 * h.distance), alt = h.point.y + T3.o[2]; if(Math.abs(alt - S.res.plafHc) <= tol) return h; }
+  return null; }
 const plafZr = () => (S.res.zRefB != null ? S.res.zRefB : S.res.tRef);
 function plafDragStart(ev){
   if(ev.button !== 0) return false; const h = plafHit(ev); if(!h) return false;
   const dir = new THREE.Vector3(); T3.cam.getWorldDirection(dir); dir.y = 0; if(dir.lengthSq() < 1e-6) dir.set(0, 0, 1); dir.normalize();
   T3.pdrag = { p0: h.point.clone(), plane: new THREE.Plane().setFromNormalAndCoplanarPoint(dir, h.point), z0: S.res.plafHc, z: S.res.plafHc, moved: false, x0: ev.clientX, y0: ev.clientY,
     objs: T3.group.children.filter((o) => (o.userData.keys && o.userData.keys.length && o.userData.keys.every((k) => /^P\|h/.test(k))) || /^P\|h/.test(o.userData.key || '')) };
+  // repère de la cote : contour de l'emprise à la hauteur du plafond (visible aussi devant les pignons)
+  const fp = S.b.footprint, o = T3.o, pts = [...fp, fp[0]].map((q) => new THREE.Vector3(q[0] - o[0], S.res.plafHc - o[2], -(q[1] - o[1])));
+  const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0xe8590c, depthTest: false })); ln.renderOrder = 10;
+  T3.group.add(ln); T3.pdrag.line = ln; T3.pdrag.objs.push(ln);
   T3.ctl.enabled = false; return true; }
 function plafDragMove(ev){
   const d = T3 && T3.pdrag;
   if(!d){ if(T3 && !ev.buttons && !T3.drag && !T3.wdrag && plafHit(ev)){ T3.r.domElement.style.cursor = 'ns-resize'; const zr = plafZr(), v = S.res.plafHc - zr;
-      hint3(`Faux-plafond : ${v >= 0 ? '+' : ''}${v.toFixed(2)} m / ±0.00 — glisser vers le haut ou le bas pour le déplacer (Maj : pas de 10 cm)`); T3.tipHover = true; return true; } return false; }
+      hint3(`Faux-plafond : ${v >= 0 ? '+' : ''}${v.toFixed(2)} m / ±0.00 — glisser vers le haut ou le bas pour le déplacer, sur le plafond ou sur sa ligne aux pignons (Maj : pas de 10 cm)`); T3.tipHover = true; return true; } return false; }
   const q = new THREE.Vector3(); if(!ray3(ev).ray.intersectPlane(d.plane, q)) return true;
   const zr = plafZr(), st = ev.shiftKey ? 0.1 : 0.01; let v = Math.round((d.z0 + (q.y - d.p0.y) - zr) / st) * st;
   const zs = S.res.pans.filter((p) => p.az != null && p.tilt > 3); const lo = Math.min(...zs.map((p) => p.zmin)) - zr - 3, hi = Math.max(...zs.map((p) => p.zmax)) - zr;
@@ -5120,7 +5128,7 @@ function plafDragMove(ev){
   d.objs.forEach((o) => { o.position.y = d.z - d.z0; }); T3.render();
   hint3(`Faux-plafond : ${v >= 0 ? '+' : ''}${v.toFixed(2)} m / ±0.00 — relâchez pour recalculer`); return true; }
 function plafDragEnd(ev){
-  const d = T3 && T3.pdrag; if(!d) return false; T3.pdrag = null; T3.ctl.enabled = true;
+  const d = T3 && T3.pdrag; if(!d) return false; T3.pdrag = null; T3.ctl.enabled = true; if(d.line){ T3.group.remove(d.line); d.line.geometry.dispose(); d.objs = d.objs.filter((o) => o !== d.line); }
   if(!d.moved || Math.abs(d.z - d.z0) < 0.005){ d.objs.forEach((o) => { o.position.y = 0; }); pick3D(ev); return true; }
   S.extra.plafZ = Math.round((d.z - plafZr()) * 100) / 100; const i = $('c-plafz'); if(i) i.value = S.extra.plafZ;
   T3.sel = []; complementsChanged(); hint3(`Faux-plafond à ${S.extra.plafZ >= 0 ? '+' : ''}${S.extra.plafZ.toFixed(2)} m / ±0.00 (Ctrl+Z pour annuler).`); return true; }
