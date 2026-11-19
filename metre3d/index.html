@@ -448,8 +448,10 @@ body.noscroll{overflow:hidden}
             <label><input type="radio" name="combles" value=""><span>Inconnu</span></label>
             <label><input type="radio" name="combles" value="chauffés"><span>Chauffés</span></label>
             <label><input type="radio" name="combles" value="non chauffés"><span>Non chauffés</span></label>
+            <label><input type="radio" name="combles" value="partiels"><span>Partiels (faux-plafond)</span></label>
           </div>
-          <p class="hint">Non chauffés : l'enveloppe devient le plancher des combles (empreinte) au lieu des rampants.</p>
+          <div id="c-plaf" hidden style="margin-top:6px"><label>Cote du faux-plafond <input type="number" step="0.01" id="c-plafz" style="width:90px" placeholder="égout haut"> m / ±0.00</label> <span class="note" id="c-plaf-st"></span></div>
+          <p class="hint">Non chauffés : l'enveloppe devient le plancher des combles (empreinte) au lieu des rampants. Partiels : rampants et murs chauffés sous un plafond horizontal, froid au-dessus (pointe du pignon, pans plus hauts) ; plafond créé là où le toit dépasse la cote (vide = égout le plus haut).</p>
         </div>
         <div>
           <h2>Sous-sol</h2>
@@ -1486,7 +1488,10 @@ body.noscroll{overflow:hidden}
     const sreTot = sreRows.filter((r) => r.statut === 'Chauffé').reduce((s, r) => s + r.s, 0);
     const Aroof = res.pans.reduce((s, p) => s + p.A, 0);
     const flat = res.pans.every((p) => p.az == null);
-    if (extra.combles === 'non chauffés') {
+    if (extra.combles === 'partiels') {
+      h.push([`Combles partiels (saisi) : faux-plafond horizontal à ${isFinite(extra.plafZ) ? fmt(extra.plafZ, 2) + ' m / ±0.00 (saisi)' : 'la cote de l\'égout le plus haut (par défaut)'} ; rampants et murs chauffés en dessous, pointe des pignons et parties de toit au-dessus hors enveloppe.`,
+        'Contrôler la cote du faux-plafond sur coupe', 'Moyen']);
+    } else if (extra.combles === 'non chauffés') {
       h.push([`Combles non chauffés (saisi) : enveloppe = plancher des combles ≈ empreinte ${fmt(res.footprintArea)} m² (au nu ext.). Rampants 3D ${fmt(Aroof)} m² non comptés.`,
         'Contrôler la surface du plancher des combles sur plan', 'Moyen']);
     } else if (extra.combles) {
@@ -1820,6 +1825,10 @@ body.noscroll{overflow:hidden}
     const pitched = res.pans.filter((p) => p.az != null && p.tilt > 3);
     const zEave = pitched.length ? Math.min(...pitched.map((p) => p.zmin)) : null;
     const zCut = res.zCut, big = 1e4, combNC = extra.combles === 'non chauffés', ss = extra.soussol;
+    // combles partiels : faux-plafond horizontal à la cote Hc (saisie / ±0.00, sinon égout le plus haut) ; chaud dessous, froid dessus
+    const zr0 = res.zRefB != null ? res.zRefB : res.tRef, combP = extra.combles === 'partiels' && pitched.length > 0;
+    const Hc = combP ? (isFinite(extra.plafZ) ? zr0 + extra.plafZ : Math.max(...pitched.map((p) => p.zmin))) : null;
+    if (combP) res.plafHc = Hc;
     // découpe par niveaux (étages d'isolation différente) : cotes saisies, même référence que la base de l'enveloppe
     const zr = res.zRefB != null ? res.zRefB : res.tRef, cuts = (extra.cuts || []).filter((x) => x && isFinite(x.z)).map((x) => ({ z: zr + x.z, name: x.name || '', off: x.off || [] })).sort((a, c) => a.z - c.z);
     const zoneOf = (zm) => { let k = 0; cuts.forEach((x, j) => { if (zm >= x.z) k = j + 1; }); return k; };
@@ -1833,10 +1842,10 @@ body.noscroll{overflow:hidden}
       const t = e.terrain.slice().sort((a, c) => a[0] - c[0]);
       const prof = [[-5, t[0][1]], ...t, [e.L + 5, t[t.length - 1][1]]];
       const above = [[...prof, [e.L + 5, big], [-5, big], prof[0]]], below = [[...prof, [e.L + 5, -big], [-5, -big], prof[0]]];
-      const bands = []; const c0 = zCut != null ? zCut : -big, c1 = zEave != null ? zEave : big;
+      const bands = []; const c0 = zCut != null ? zCut : -big, c1 = combP ? Hc : zEave != null ? zEave : big;
       if (zCut != null) bands.push(['bas', -big, zCut]);
       bands.push(['mur', c0, Math.max(c0, c1)]);
-      if (zEave != null && zEave > c0) bands.push(['pignon', zEave, big]);
+      if ((combP || zEave != null) && c1 > c0) bands.push(['pignon', c1, big]);
       // pignon (au-dessus de la base du pignon de CETTE façade) : toujours d'un seul morceau, ni coupe horizontale ni verticale
       const GR = edgeGrid(res, extra, i), zG = GR.zG, cutsE = GR.cutsE, vs = GR.vs, incR = e.u[0] * -e.n[1] + e.u[1] * e.n[0] > 0;   // vue de l'extérieur : s croît vers la droite ?
       // nom d'une bande verticale : saisi (V|arête|vj) ou « partie k » numérotée de gauche à droite vue de l'extérieur
@@ -1875,8 +1884,8 @@ body.noscroll{overflow:hidden}
           let depth = 0; if (ter === 'ent') poly.forEach((pg) => pg[0].forEach(([s, z]) => { depth = Math.max(depth, interpT(t, s) - z); }));
           const terT = depth > 2 ? 'Contre terrain >2 m' : 'Contre terrain ≤ 2 m';
           const def = band === 'bas' ? (ss === 'chauffé' ? (e.split ? 'Contre chauffé' : ter === 'hs' ? 'Mur extérieur' : terT) : OUT)
-            : e.split ? (band === 'pignon' && combNC ? OUT : 'Contre chauffé')
-            : band === 'pignon' ? (combNC ? OUT : 'Mur extérieur') : (ter === 'hs' ? 'Mur extérieur' : terT);
+            : e.split ? (band === 'pignon' && (combNC || combP) ? OUT : 'Contre chauffé')
+            : band === 'pignon' ? (combNC || combP ? OUT : 'Mur extérieur') : (ter === 'hs' ? 'Mur extérieur' : terT);
           const key = `M|${i}|${band}|${ter}` + (zone != null ? `|z${zone}` : '') + (vj != null ? `|v${vj}` : '') + (g ? '|g' : '');
           const zz = zone != null ? zoneName(zone) : null, [vn, vU] = vj != null && !vAll ? vName(vj) : [null, false];
           const zn = [zz, vn].filter(Boolean).join(' – ') || null, name = nm(key, zn);
@@ -1887,7 +1896,8 @@ body.noscroll{overflow:hidden}
     });
     (res.roofWalls || []).forEach((w, k) => {
       // combles non chauffés : seuls les murs dans la toiture (lucarnes) sont hors enveloppe, pas les murs en retrait des étages
-      const def = w.split ? 'Contre chauffé' : combNC && w.roof ? OUT : 'Mur extérieur';
+      let wz = Infinity; if (combP && w.roof && w.poly) w.poly.forEach((pg) => pg[0].forEach(([, z]) => { wz = Math.min(wz, z); }));
+      const def = w.split ? 'Contre chauffé' : (combNC && w.roof) || (combP && w.roof && wz >= Hc - 0.05) ? OUT : 'Mur extérieur';
       // coupes horizontales : murs en retrait découpés comme les façades ; murs dans la toiture d'un seul morceau (comme le pignon)
       let parts = [[`L|${k}`, w, w.area, null]];
       if (cuts.length && w.poly && w.poly.length) {
@@ -1900,13 +1910,38 @@ body.noscroll{overflow:hidden}
         label: (name ? name + ' — ' : '') + (w.split ? `Mur ${w.orientation} sur la limite de séparation (mitoyen)` : w.roof ? `Mur dans la toiture ${w.orientation} (lanterneau / lucarne)`
           : w.low ? `Mur ${w.orientation} en retrait depuis le terrain (entrée, loggia, cour, étage décalé)` : `Mur ${w.orientation} en retrait / au-dessus d'une partie basse`) }); });
     });
+    const hiAll = [];                                                       // combles partiels : parties de toit au-dessus du faux-plafond (en plan)
+    const hSplit = (polys) => { const lo = { area: 0, polys: [] }, hi = { area: 0, polys: [] };
+      polys.forEach(({ mp, n, p0 }) => { const cosT = Math.abs(n[2]) / Math.hypot(...n); if (cosT < 0.05) return;
+        // z(x,y) ≤ Hc  ⇔  −(n0 x + n1 y)/n2 ≤ Hc − p0z − (n0 x0 + n1 y0)/n2 : demi-plan en plan
+        const a = -n[0] / n[2], b2 = -n[1] / n[2], c = Hc - p0[2] - (n[0] * p0[0] + n[1] * p0[1]) / n[2], m = Math.hypot(a, b2);
+        let qlo, qhi;
+        if (m < 1e-9) { if (c >= 0) { qlo = mp; qhi = []; } else { qlo = []; qhi = mp; } }
+        else { const ux = a / m, uy = b2 / m, d0 = c / m, B = 1e4, cx = p0[0], cy = p0[1];   // {u·x ≤ d0}, autour du point p0
+          const k0 = d0 - (ux * cx + uy * cy), px = cx + ux * k0, py = cy + uy * k0, tx = -uy, ty = ux;
+          const hl = [[[px + tx * B, py + ty * B], [px - tx * B, py - ty * B], [px - tx * B - ux * B, py - ty * B - uy * B], [px + tx * B - ux * B, py + ty * B - uy * B], [px + tx * B, py + ty * B]]];
+          try { qlo = PC.intersection(mp, hl); qhi = PC.difference(mp, hl); } catch (e) { qlo = mp; qhi = []; } }
+        if (qlo.length && mpArea(qlo) > 1e-4) { lo.area += mpArea(qlo) / cosT; lo.polys.push({ mp: qlo, n, p0 }); }
+        if (qhi.length && mpArea(qhi) > 1e-4) { hi.area += mpArea(qhi) / cosT; hi.polys.push({ mp: qhi, n, p0 }); hiAll.push(qhi); } });
+      return [lo, hi]; };
     res.pans.forEach((p, i) => { if (!(p.A >= 0.05)) return;               // pan entièrement hors emprise (débord de toit)
       const flat = p.az == null || p.tilt <= 3, key = `T|${i}`, def = combNC && !flat ? OUT : flat ? 'Toit plat / terrasse' : 'Toit en pente', o = flat ? 'Horiz' : sector(p.az);
       const lab0 = flat ? 'Toit plat' : `Pan de toit ${o} (${fmt(p.tilt, 0)}°)`, parts = roofSplit(res, extra, i);
+      if (combP && !flat && p.faces) {
+        const base = parts || [{ sig: null, area: p.A, polys: p.faces.map((f) => { const pl = planeZ(f); return pl ? { mp: [[[...f.map((q) => [q[0], q[1]]), [f[0][0], f[0][1]]]]], n: pl.n, p0: pl.p0 } : null; }).filter(Boolean) }];
+        base.forEach((r, k) => { const [lo, hi] = hSplit(r.polys), k0 = r.sig == null ? key : `T|${i}|r${r.sig}`, zn = r.sig == null ? null : `partie ${k + 1}`;
+          if (lo.area > 0.05) { const name = nm(k0, zn); P.push({ key: k0, kind: 'toit', pan: i, orientation: o, area: lo.area, def, type: adj[k0] || def, zone: name, custom: !!(name && name !== zn), rpolys: lo.polys, label: `${lab0}${name ? ' — ' + name : ''} — sous le faux-plafond (chauffé)` }); }
+          if (hi.area > 0.05) { const kh = k0 + '|h', name = nm(kh); P.push({ key: kh, kind: 'toit', pan: i, orientation: o, area: hi.area, def: OUT, type: adj[kh] || OUT, zone: name, custom: !!name, rpolys: hi.polys, label: `${lab0}${zn ? ' — ' + zn : ''} — au-dessus du faux-plafond (combles froids)` }); } });
+        return; }
       if (!parts) { P.push({ key, kind: 'toit', pan: i, orientation: o, area: p.A, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key), label: lab0 }); return; }
       parts.forEach((r, k) => { const kk = `T|${i}|r${r.sig}`, zn = `partie ${k + 1}`, name = nm(kk, zn);
         P.push({ key: kk, kind: 'toit', pan: i, orientation: o, area: r.area, def, type: adj[kk] || def, zone: name, custom: name !== zn, rpolys: r.polys, label: `${lab0} — ${name}` }); });
     });
+    if (combP && hiAll.length) {                                            // faux-plafond : là où le toit passe au-dessus de la cote
+      let U2 = []; try { U2 = PC.union(...hiAll); } catch (e) { U2 = []; }
+      U2.map((pg) => ({ pg, A: Math.abs(ringArea(pg[0].slice(0, -1))) - pg.slice(1).reduce((a, h) => a + Math.abs(ringArea(h.slice(0, -1))), 0) })).filter((x) => x.A > 0.2).sort((a, c) => c.A - a.A)
+        .forEach((x, k) => { const key = k ? `P|h|${k}` : 'P|h', def = 'Plafond/grenier contre non-chauffé', name = nm(key);
+          P.push({ key, kind: 'plafond', orientation: 'Horiz', area: x.A, z: Hc, poly2d: x.pg.map((r) => r.slice(0, -1)), def, type: adj[key] || def, zone: name, custom: !!name, label: `Faux-plafond contre combles froids (cote ${fmt(Hc - zr0, 2)} m / ±0.00)` }); }); }
     const FPS = splitFootprint(res, extra);
     if (zEave != null && FPS) { const def = combNC ? 'Plafond/grenier contre non-chauffé' : OUT;
       FPS.forEach((x, k) => { const key = `P|0|r${k}`, zn = `partie ${k + 1}`, name = nm(key, zn);
@@ -2283,7 +2318,7 @@ body.noscroll{overflow:hidden}
     put(So, 'sols', 11, 18, { a: 'E', n: 'H', U: 'F', b: 'G' });
     rep.subtract = subtract;
     const flat = res.pans.every((p) => p.az == null);
-    if (ex.combles) set(T, 'C3', flat ? 'Toiture plate' : ex.combles === 'non chauffés' ? 'Incliné, non chauffé' : 'Incliné, chauffé');
+    if (ex.combles) set(T, 'C3', flat ? 'Toiture plate' : ex.combles === 'non chauffés' ? 'Incliné, non chauffé' : 'Incliné, chauffé');   // partiels : rampants chauffés + faux-plafond
     if (ex.soussol) set(So, 'C3', { 'aucun': null, 'non chauffé': 'pas du tout', 'chauffé': 'entièrement' }[ex.soussol] || get(So, 'C3'));
 
     // --- Fenêtres et portes (d.wins = [{ f, parent, out }])
@@ -2809,6 +2844,7 @@ const opt = (vals, cur) => vals.map((v) => `<option${v === cur ? ' selected' : '
 function renderComp(){
   renderCorr();
   document.querySelectorAll('input[name=combles]').forEach((r) => { r.checked = r.value === (S.extra.combles || ''); });
+  $('c-plaf').hidden = S.extra.combles !== 'partiels'; $('c-plafz').value = S.extra.plafZ ?? '';
   document.querySelectorAll('input[name=soussol]').forEach((r) => { r.checked = r.value === (S.extra.soussol || ''); });
   $('c-sre').tBodies[0].innerHTML = SRE_ROWS.map(([k, l]) => {
     const v = S.extra.sre[k] || {}, def = k === 'soussol' ? 'Non chauffé' : 'Chauffé';
@@ -2836,7 +2872,8 @@ function renderComp(){
   $('c-win-tot').textContent = fmt(Object.values(winByFacade()).reduce((s, a) => s + a, 0));
   renderQuick();
 }
-document.querySelectorAll('input[name=combles]').forEach((r) => r.addEventListener('change', () => { S.extra.combles = r.value || null; complementsChanged(); }));
+document.querySelectorAll('input[name=combles]').forEach((r) => r.addEventListener('change', () => { S.extra.combles = r.value || null; $('c-plaf').hidden = S.extra.combles !== 'partiels'; complementsChanged(); }));
+$('c-plafz').addEventListener('change', (e) => { const v = numIn(e.target.value); if(v == null) delete S.extra.plafZ; else S.extra.plafZ = v; complementsChanged(); });
 document.querySelectorAll('input[name=soussol]').forEach((r) => r.addEventListener('change', () => { S.extra.soussol = r.value || null; renderSSFields(); complementsChanged(); }));
 $('c-sre').addEventListener('change', (e) => {
   const tr = e.target.closest('tr[data-k]'); if(!tr) return;
@@ -4720,7 +4757,8 @@ function drawDecomp(g, DC, P, b, res, ink){
     const on = G.keys.some((k) => sel.has(k)), geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(G.tris.flat(), 3)); geo.computeVertexNormals();
     const c = new THREE.Color(G.col); if(on) c.lerp(acc, 0.45);
-    const mm = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+    const ghost = G.type === C.OUT && !on && G.keys.every((k) => /^T\|.*\|h$/.test(k));   // toit au-dessus du faux-plafond : transparent (on voit le plafond)
+    const mm = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: c, emissive: c.clone().multiplyScalar(G.type === C.OUT ? 0.12 : 0.55), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, transparent: ghost, opacity: ghost ? 0.28 : 1, depthWrite: !ghost }));
     mm.userData.el = 1; mm.userData.col = G.col; g.add(mm);
     // arêtes : seulement les vrais angles (> 20°) et le contour, pas les jonctions entre morceaux coplanaires
     const mg = THREE.BufferGeometryUtils && THREE.BufferGeometryUtils.mergeVertices ? THREE.BufferGeometryUtils.mergeVertices(geo, 1e-3) : geo;
@@ -4753,7 +4791,7 @@ function drawDecomp(g, DC, P, b, res, ink){
     const tilt = Math.acos(Math.min(1, n[2] / m)) * 180 / Math.PI, az = tilt >= 3 ? ((Math.atan2(n[0], n[1]) * 180 / Math.PI) + 360) % 360 : null;
     let bi = 0, bd = Infinity; res.pans.forEach((pp, i) => { const d = (pp.az == null || az == null ? (pp.az == null && az == null ? 0 : 90) : Math.abs(((pp.az - az + 540) % 360) - 180)) + Math.abs(pp.tilt - tilt); if(d < bd){ bd = d; bi = i; } });
     for(let k = 1; k < t.length - 1; k++) byPan[bi].push(P(t[0], res.dz), P(t[k], res.dz), P(t[k + 1], res.dz)); });
-  byPan.forEach((tris, i) => { const p = DC.byKey.get('T|' + i); if(!p || !tris.length) return;
+  byPan.forEach((tris, i) => { const p = DC.byKey.get('T|' + i); if(!p || !tris.length || p.rpolys) return;   // pan découpé (faux-plafond…) : dessiné par ses parties
     const pf = res.pans[i].faces; if(res.pans[i].Araw != null && pf){ const t2 = [];          // toiture limitée à l'emprise : dessinée depuis les faces découpées
       pf.forEach((f) => { const n = [0, 0, 0]; for(let k = 0; k < f.length; k++){ const a = f[k], c = f[(k + 1) % f.length]; n[0] += (a[1] - c[1]) * (a[2] + c[2]); n[1] += (a[2] - c[2]) * (a[0] + c[0]); n[2] += (a[0] - c[0]) * (a[1] + c[1]); }
         if(Math.abs(n[2]) < 1e-9) return; const p0 = f[0], zf = (x, y) => p0[2] - (n[0] * (x - p0[0]) + n[1] * (y - p0[1])) / n[2];
@@ -4771,7 +4809,7 @@ function renderDecomp(){
   const DC = T3 && T3.dc; if(!DC) return;
   const ps = selInfo(), box = $('d3-edit');
   if(!ps.length){ box.innerHTML = `<div class="note">Cliquez un mur ou un pan de toit (Maj + clic : plusieurs).</div>
-    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${DC.pieces.filter((p) => p.kind === 'plafond' || p.kind === 'sol').map((p) => `<button type="button" class="ghost sm" data-pick="${p.key}">${p.kind === 'sol' ? (/^S\|o/.test(p.key) ? 'Plancher sur l\'extérieur' : /^S\|b/.test(p.key) ? 'Sol partie accolée' : 'Sol / dalle') : 'Plancher des combles'}</button>`).join('')}</div>`; }
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${DC.pieces.filter((p) => p.kind === 'plafond' || p.kind === 'sol').map((p) => `<button type="button" class="ghost sm" data-pick="${p.key}">${p.kind === 'sol' ? (/^S\|o/.test(p.key) ? 'Plancher sur l\'extérieur' : /^S\|b/.test(p.key) ? 'Sol partie accolée' : 'Sol / dalle') : /^P\|h/.test(p.key) ? 'Faux-plafond' : 'Plancher des combles'}</button>`).join('')}</div>`; }
   else {
     const kind = ps[0].kind === 'plafond' ? 'toit' : ps[0].kind, same = ps.every((p) => (p.kind === 'plafond' ? 'toit' : p.kind) === kind), A = ps.reduce((s, p) => s + p.area, 0);
     const cur = ps.every((p) => p.type === ps[0].type) ? ps[0].type : '';
