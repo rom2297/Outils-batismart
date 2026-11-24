@@ -4772,7 +4772,7 @@ function drawDecomp(g, DC, P, b, res, ink){
   const coldTop = (p) => coldOn && p.type === C.OUT && p.kind === 'mur' && (p.band === 'pignon' || p.band === 'toiture');   // pans de toit froids : transparents (voir flush)
   const add = (tris, p) => {                   // tris : [[x,y,z]…] par 3
     if(coldTop(p)) return;
-    const ln = DC.lineOf.get(p.key), gk = ln ? ln.lk : 'X|' + p.key;
+    const ln = DC.lineOf.get(p.key), gk = (sel.has(p.key) ? 'S|' : '') + (ln ? ln.lk : 'X|' + p.key);   // morceaux sélectionnés dessinés à part : seule la sélection s'allume
     const G = grp.get(gk) || { tris: [], keys: [], type: p.type, col: ln ? ln.col : OUT_COL }; G.tris.push(...tris); G.keys.push(p.key); grp.set(gk, G);
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
     const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }));   // cible de clic invisible, par morceau
