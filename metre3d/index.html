@@ -400,7 +400,8 @@ body.noscroll{overflow:hidden}
           <label style="display:inline-flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="ex-ch" checked> Chauffé (dans l'enveloppe)</label>
           <div id="ex-ext" style="margin-top:8px"><label>Cote du haut <input type="number" step="0.01" id="ex-h" value="3.00" style="width:80px"> m / ±0.00</label> <label style="margin-left:10px">Pente <input type="number" step="1" min="0" max="60" id="ex-p" value="0" style="width:60px"> °</label>
             <p class="hint">Toit plat : cote de l'acrotère. Monopente : cote du haut, contre le bâtiment ; le toit descend vers l'extérieur.</p></div>
-          <div id="ex-ss" hidden style="margin-top:8px"><label>Cote du radier <input type="number" step="0.01" id="ex-z" value="-2.60" style="width:80px"> m / ±0.00</label></div>
+          <div id="ex-ss" hidden style="margin-top:8px"><label>Profondeur à ajouter <input type="number" step="0.01" min="0" id="ex-z" value="0.80" style="width:80px"> m</label>
+            <p class="hint">Sous le bas actuel des murs (le pied vert dans la 3D) : les murs contre terrain descendent d'autant sur l'emprise tracée, le sol aussi.</p></div>
           <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px"><button type="button" class="ghost sm" id="ex-go" aria-pressed="false">✎ Tracer l'emprise</button><button type="button" class="ghost sm" id="ex-all" hidden title="Sous-sol sur toute l'emprise : réglé dans Réglages › Sous-sol (chauffé ou non) avec la cote du radier">Sous-sol sous tout le bâtiment</button></div>
           <p class="note" id="ex-msg" style="margin-top:6px"></p>
           <h2 style="margin-top:14px">Extrusions de ce bâtiment</h2>
@@ -1239,13 +1240,8 @@ body.noscroll{overflow:hidden}
       if (it.kind === 'ss') {
         const zR = it.zf, A = rings.reduce((s, r) => s + Math.abs(ringArea(r)), 0);
         ssParts.push({ id: it.id, rings, area: A, z: zR, chauffe: !!it.chauffe });
-        if (!it.chauffe) { rings.forEach((R) => ghosts.push(...prism(R, zR, () => zB))); return; }
-        if (!(zR < zB - 0.05)) return; geo = true; zDeep = Math.min(zDeep, zR);
-        faces = faces.flatMap((t) => { const n = newell(t), m = norm(n); if (m < 1e-9 || Math.abs(n[2]) / m < 0.97 || t.some((p) => p[2] > zB + 0.05)) return [t];
-          let d; try { d = PC.difference([cl(t)], ...rings.map((R) => [cl(R)])); } catch (e) { return [t]; }
-          return noHoles(d).map((r) => { const f = r.map(([x, y]) => [x, y, zB]); return earFirst(newell(f)[2] * n[2] < 0 ? f.reverse() : f); }); });
-        rings.forEach((R) => { R.forEach((a, i) => { const c = R[(i + 1) % R.length]; if (Math.hypot(c[0] - a[0], c[1] - a[1]) > 0.02) faces.push(wall(a, c, zR, zB, zB)); });
-          faces.push(earFirst(R.slice().reverse().map((p) => [p[0], p[1], zR]))); });
+        // pas de géométrie : murs, murs intérieurs et radier construits dans decompose (sous la base actuelle de l'enveloppe)
+        if (!it.chauffe) rings.forEach((R) => ghosts.push(...prism(R, zR, () => Math.max(zR + 0.1, zB))));
         return;
       }
       const zf = extZ(it, fp0);
@@ -1944,10 +1940,10 @@ body.noscroll{overflow:hidden}
       let U0 = e.U; if (isFinite(e.zbot) && zF < e.zbot - 0.01) U0 = PC.union(U0, [[[0, zF], [e.L, zF], [e.L, e.zbot + 0.01], [0, e.zbot + 0.01], [0, zF]]]);   // radier plus profond que le modèle : mur prolongé
       // sous-sol partiel extrudé : sous zF, on ne garde que les tronçons de façade où il touche
       const keep = [[[-1, zF], [e.L + 1, zF], [e.L + 1, big], [-1, big], [-1, zF]]];
-      if (res.zDeep != null) ((res.extru && res.extru.ssParts) || []).filter((sp) => sp.chauffe).forEach((sp) => sp.rings.forEach((R) => R.forEach((a, j) => { const c = R[(j + 1) % R.length];
+      ((res.extru && res.extru.ssParts) || []).filter((sp) => sp.chauffe && sp.z < zF - 0.01).forEach((sp) => sp.rings.forEach((R) => R.forEach((a, j) => { const c = R[(j + 1) % R.length];
         if (segDist(a[0], a[1], e.p1[0], e.p1[1], e.p2[0], e.p2[1]) > 0.05 || segDist(c[0], c[1], e.p1[0], e.p1[1], e.p2[0], e.p2[1]) > 0.05) return;
         const sa = (a[0] - e.p1[0]) * e.u[0] + (a[1] - e.p1[1]) * e.u[1], sc = (c[0] - e.p1[0]) * e.u[0] + (c[1] - e.p1[1]) * e.u[1], s0 = Math.min(sa, sc), s1 = Math.max(sa, sc); if (s1 - s0 < 0.05) return;
-        keep.push([[s0, -big], [s1, -big], [s1, zF + 0.01], [s0, zF + 0.01], [s0, -big]]); })));
+        const r = [[s0, sp.z], [s1, sp.z], [s1, zF + 0.01], [s0, zF + 0.01], [s0, sp.z]]; try { U0 = PC.union(U0, [r]); } catch (err) {} keep.push(r); })));
       let U; try { U = keep.length > 1 ? PC.intersection(U0, PC.union(...keep.map((r) => [r]))) : PC.intersection(U0, [keep[0]]); } catch (err) { U = PC.intersection(U0, [keep[0]]); } if (!U.length) return;
       const t = e.terrain.slice().sort((a, c) => a[0] - c[0]);
       const prof = [[-5, t[0][1]], ...t, [e.L + 5, t[t.length - 1][1]]];
@@ -2085,7 +2081,14 @@ body.noscroll{overflow:hidden}
         const def = sp.chauffe ? (dep > 2 ? 'Contre terrain > 2 m' : 'Contre terrain ≤ 2 m') : 'Contre non-chauffé (Ssol sous terre) (non isolé et/ou non étanche à l\'air)';
         P.push({ key: kk, kind: 'sol', orientation: 'Horiz', area: sp.area, z: sp.chauffe ? sp.z : zb, mp2d: Q, def, type: adj[kk] || def, zone: nm(kk), custom: !!nm(kk),
           label: sp.chauffe ? `Radier du sous-sol extrudé (${fmt(dep)} m sous le terrain moyen)` : 'Plancher sur le sous-sol non chauffé (extrusion)' }); });
-      for (let k = P.length - 1; k >= 0; k--) if (P[k].kind === 'sol' && /^S\|0/.test(P[k].key) && P[k].mp2d && P[k].area < 0.05) P.splice(k, 1); }
+      for (let k = P.length - 1; k >= 0; k--) if (P[k].kind === 'sol' && /^S\|0/.test(P[k].key) && P[k].mp2d && P[k].area < 0.05) P.splice(k, 1);
+      // murs du sous-sol sous le bâtiment (côtés de l'emprise du sous-sol qui ne sont pas en façade) : contre terrain, du radier à la base actuelle
+      const zTopI = res.zFloor != null ? res.zFloor : zb, onF = (p) => res.edges.some((e) => segDist(p[0], p[1], e.p1[0], e.p1[1], e.p2[0], e.p2[1]) < 0.05);
+      ssP.filter((sp) => sp.chauffe && sp.z < zTopI - 0.01).forEach((sp) => sp.rings.forEach((R, ri) => R.forEach((a, j) => { const c = R[(j + 1) % R.length], L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+        if (L < 0.1 || (onF(a) && onF(c) && onF([(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]))) return;
+        const u = [(c[0] - a[0]) / L, (c[1] - a[1]) / L], H = zTopI - sp.z, key = `M|x${sp.id}|${ri}|${j}`, dep = (res.tRef != null ? res.tRef : zTopI) - sp.z, def = dep > 2 ? 'Contre terrain >2 m' : 'Contre terrain ≤ 2 m', o = sector(azimuth(u[1], -u[0]));
+        P.push({ key, kind: 'mur', edge: -1, band: 'ressaut', ter: 'ent', orientation: o, plane: { poly: [[[[0, sp.z], [L, sp.z], [L, zTopI], [0, zTopI], [0, sp.z]]]], o: [a[0], a[1]], t: u }, area: L * H, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key),
+          label: `Mur ${o} du sous-sol ${sp.id}, sous le bâtiment (contre terrain)` }); }))); }
     (res.overhangs || []).forEach((o, k) => {
       const key = `S|o${k}`, def = 'Contre extérieur';
       P.push({ key, kind: 'sol', orientation: 'Horiz', area: o.area, z: o.z, poly2d: o.poly, def, type: adj[key] || def, zone: nm(key), custom: !!nm(key),
@@ -6113,6 +6116,7 @@ const undoState = () => JSON.stringify({ x: S.extra, m: S.plans.map((p) => p.mea
 // ============================================================ extrusions : extension accolée, sous-sol partiel
 const EX = { on: false, pts: [] };
 const exZr = () => S.res ? (S.res.zRefB != null ? S.res.zRefB : S.res.tRef) : 0;
+const exBase = () => S.res ? (S.res.zFloor != null ? S.res.zFloor : S.res.tMin) : 0;   // bas actuel des murs
 const exList = () => (S.extra.extru || []).filter((x) => x && S.bOrig && x.uuid === S.bOrig.props.UUID);
 const exKind = () => { const r = document.querySelector('input[name=ex-kind]:checked'); return r ? r.value : 'ext'; };
 function exForm(){ const k = exKind(); $('ex-ext').hidden = k !== 'ext'; $('ex-ss').hidden = k !== 'ss'; $('ex-all').hidden = k !== 'ss'; }
@@ -6162,19 +6166,19 @@ function renderExtru(){
   svg.addEventListener('click', (ev) => { if(!EX.on) return; ev.preventDefault(); const r = snap(toEN(ev), ev); if(r.close){ exFinish(); return; } EX.pts.push([r.p[0], r.p[1]]); redraw(); });
   // liste
   const zr = exZr();
-  $('ex-list').innerHTML = items.length ? `<div class="tablewrap"><table><thead><tr><th>N°</th><th>Volume</th><th class="n">m² au sol</th><th>Chauffé</th><th>Cote m / ±0.00</th><th>Pente °</th><th></th></tr></thead><tbody>${items.map((x) => `<tr data-ex="${x.id}">
+  $('ex-list').innerHTML = items.length ? `<div class="tablewrap"><table><thead><tr><th>N°</th><th>Volume</th><th class="n">m² au sol</th><th>Chauffé</th><th>Cote / profondeur</th><th>Pente °</th><th></th></tr></thead><tbody>${items.map((x) => `<tr data-ex="${x.id}">
       <td class="mono">${x.id}</td><td>${x.kind === 'ss' ? 'Sous-sol partiel' : 'Extension'}</td><td class="n">${fmt(x.A || 0)}</td>
       <td><input type="checkbox" data-k="chauffe"${x.chauffe ? ' checked' : ''} aria-label="Chauffé"></td>
-      <td><input type="number" step="0.01" data-k="z" style="width:80px" value="${((x.kind === 'ss' ? x.zf : x.zt) - zr).toFixed(2)}" aria-label="${x.kind === 'ss' ? 'Cote du radier' : 'Cote du haut'}"> <span class="note">${x.kind === 'ss' ? 'radier' : x.pente > 0 ? 'haut, contre le bâtiment' : 'acrotère'}</span></td>
+      <td><input type="number" step="0.01" data-k="z" style="width:80px" value="${(x.kind === 'ss' ? exBase() - x.zf : x.zt - zr).toFixed(2)}" aria-label="${x.kind === 'ss' ? 'Profondeur' : 'Cote du haut'}"> <span class="note">${x.kind === 'ss' ? 'm de profondeur' : x.pente > 0 ? 'haut, contre le bâtiment' : 'acrotère'}</span></td>
       <td>${x.kind === 'ss' ? '' : `<input type="number" step="1" min="0" max="60" data-k="pente" style="width:60px" value="${x.pente || 0}" aria-label="Pente">`}</td>
       <td><button type="button" class="ghost sm" data-k="del" title="Supprimer cette extrusion">✕</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="note">Aucune extrusion pour ce bâtiment.</p>';
   $('ex-list').querySelectorAll('tr[data-ex]').forEach((tr) => { const x = exList().find((q) => q.id === +tr.dataset.ex); if(!x) return;
     tr.querySelectorAll('[data-k]').forEach((el) => { const k = el.dataset.k;
-      if(k === 'del') el.onclick = () => { S.extra.extru = S.extra.extru.filter((q) => q !== x); exApply(x.chauffe, `Extrusion ${x.id} supprimée.`); };
+      if(k === 'del') el.onclick = () => { S.extra.extru = S.extra.extru.filter((q) => q !== x); exApply(x.chauffe && x.kind === 'ext', `Extrusion ${x.id} supprimée.`); };
       else el.onchange = () => {
-        if(k === 'chauffe'){ x.chauffe = el.checked; exApply(true, `Extrusion ${x.id} : ${x.chauffe ? 'chauffée' : 'non chauffée'}.`); return; }
+        if(k === 'chauffe'){ x.chauffe = el.checked; exApply(x.kind === 'ext', `Extrusion ${x.id} : ${x.chauffe ? 'chauffée' : 'non chauffée'}.`); return; }
         const v = parseFloat(String(el.value).replace(',', '.')); if(!isFinite(v)) return;
-        if(k === 'z'){ if(x.kind === 'ss') x.zf = exZr() + v; else x.zt = exZr() + v; }
+        if(k === 'z'){ if(x.kind === 'ss') x.zf = exBase() - Math.abs(v); else x.zt = exZr() + v; }
         if(k === 'pente') x.pente = Math.max(0, Math.min(60, v));
         exApply(false, `Extrusion ${x.id} modifiée.`); }; }); });
 }
@@ -6183,18 +6187,19 @@ function exFinish(){
   const k = exKind(), ch = $('ex-ch').checked, zr = exZr(), num = (id, d) => { const v = parseFloat(String($(id).value).replace(',', '.')); return isFinite(v) ? v : d; };
   const id = Math.max(0, ...(S.extra.extru || []).map((x) => x.id || 0)) + 1;
   const it = { id, uuid: S.bOrig.props.UUID, kind: k, chauffe: ch, poly: ep.map((q) => [+q[0].toFixed(3), +q[1].toFixed(3)]) };
-  if(k === 'ss') it.zf = zr + num('ex-z', -2.6); else { it.zt = zr + num('ex-h', 3); it.pente = Math.max(0, Math.min(60, num('ex-p', 0))); }
+  if(k === 'ss') it.zf = exBase() - Math.abs(num('ex-z', 0.8)); else { it.zt = zr + num('ex-h', 3); it.pente = Math.max(0, Math.min(60, num('ex-p', 0))); }
   const rings = C.extRings(it, S.b.footprint); it.A = +rings.reduce((a, r) => a + Math.abs(C.ringArea ? C.ringArea(r) : 0), 0).toFixed(2);
   if(!rings.length){ $('ex-msg').textContent = k === 'ss' ? 'Le sous-sol doit être sous le bâtiment : tracez-le dans l\'emprise.' : 'L\'extension doit sortir de l\'emprise du bâtiment (en touchant une façade).'; EX.pts = []; renderExtru(); return; }
   (S.extra.extru = S.extra.extru || []).push(it);
-  exApply(ch, `${k === 'ss' ? 'Sous-sol' : 'Extension'} ${id} ajouté${k === 'ss' ? '' : 'e'} (${fmt(it.A)} m² au sol).`);
+  exApply(ch && k === 'ext', `${k === 'ss' ? 'Sous-sol' : 'Extension'} ${id} ajouté${k === 'ss' ? '' : 'e'} (${fmt(it.A)} m² au sol).`);
 }
 $('ex-go').onclick = () => { EX.on = !EX.on; EX.pts = []; $('ex-msg').innerHTML = EX.on ? 'Cliquez les angles (accrochage aux angles et aux façades · <b>Maj</b> : angle droit). Recliquez le 1er point ou <b>Entrée</b> pour fermer · <b>Retour arrière</b> : dernier point · <b>Échap</b> : abandonner.' : ''; renderExtru(); };
 $('ex-cad').onchange = (e) => { S.cadastre = e.target.checked; renderExtru(); };
 document.querySelectorAll('input[name=ex-kind]').forEach((r) => r.addEventListener('change', exForm));
 $('ex-all').onclick = () => { if(!S.res) return; const ch = $('ex-ch').checked, v = parseFloat(String($('ex-z').value).replace(',', '.'));
-  S.extra.soussol = ch ? 'chauffé' : 'non chauffé'; if(ch && isFinite(v)) S.extra.zRadier = v; else if(!ch) delete S.extra.zRadier; renderComp();
-  exApply(false, ch ? `Sous-sol chauffé sous tout le bâtiment, radier à ${isFinite(v) ? fmt(v) : '?'} m : murs contre terrain jusqu'au radier (repris dans Réglages › Sous-sol).` : 'Sous-sol non chauffé sous tout le bâtiment : dalle du rez contre non chauffé, murs du sous-sol hors enveloppe (Réglages › Sous-sol).'); };
+  const zrad = isFinite(v) ? Math.round((exBase() - Math.abs(v) - exZr()) * 100) / 100 : null;
+  S.extra.soussol = ch ? 'chauffé' : 'non chauffé'; if(ch && zrad != null) S.extra.zRadier = zrad; else if(!ch) delete S.extra.zRadier; renderComp();
+  exApply(false, ch ? `Sous-sol chauffé sous tout le bâtiment, radier à ${zrad != null ? fmt(zrad) : '?'} m / ±0.00 : murs contre terrain jusqu'au radier (repris dans Réglages › Sous-sol).` : 'Sous-sol non chauffé sous tout le bâtiment : dalle du rez contre non chauffé, murs du sous-sol hors enveloppe (Réglages › Sous-sol).'); };
 document.addEventListener('keydown', (e) => { if(!EX.on || $('t-ext').hidden || /INPUT|SELECT|TEXTAREA/.test((e.target || {}).tagName || '')) return;
   if(e.key === 'Enter'){ e.preventDefault(); exFinish(); } else if(e.key === 'Backspace'){ e.preventDefault(); EX.pts.pop(); renderExtru(); } else if(e.key === 'Escape'){ EX.on = false; EX.pts = []; $('ex-msg').textContent = ''; renderExtru(); } });
 const ANALYSIS_KEYS = ['extru', 'split', 'extend', 'keepNubs', 'corrL', 'z00', 'zBase', 'zRadier', 'groundLine', 'groundZ'];
