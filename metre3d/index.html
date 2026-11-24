@@ -328,6 +328,7 @@ body.noscroll{overflow:hidden}
         <button type="button" class="tool" data-view="cecb" aria-pressed="true">Décomposition CECB</button>
         <button type="button" class="tool" data-view="ori" aria-pressed="false">Orientations</button>
         <button type="button" class="tool" id="d3-hcut" aria-pressed="false" title="Clic sur une façade : coupe à cette hauteur sur toutes les façades (le pignon reste entier). Glisser une coupe pour la déplacer.">✂ Coupe horizontale</button>
+        <button type="button" class="tool" id="d3-meas" aria-pressed="false" title="Mesurette : cliquez 2 points sur le bâtiment (accroche aux angles). Distance, longueur en plan et dénivelé. Échap : effacer">📏 Mesurer</button>
         <button type="button" class="tool" id="d3-vcut" aria-pressed="false" title="Clic sur une façade : coupe verticale de cette façade seulement (accroche aux angles et aux tableaux de fenêtres)">✂ Coupe verticale</button>
         <label class="note" style="display:inline-flex;gap:4px;align-items:center" title="En posant une coupe verticale : la poser aussi sur la façade d'en face, au même alignement, et couper la toiture et les planchers entre les deux"><input type="checkbox" id="d3-vpair" checked> en face + toiture</label>
         <button type="button" class="tool" id="d3-wmode" aria-pressed="false" title="Poser, déplacer et dupliquer des fenêtres directement sur les façades">▭ Fenêtres</button>
@@ -4402,6 +4403,7 @@ function build3D(){
     g.add(ed);
   };
   const DC = T3.view !== 'ori' ? cecbData() : null; T3.pick = []; T3.dc = DC;
+  drawMeas(g, P);
   if(DC){ drawDecomp(g, DC, P, b, res, ink); drawCuts(g, DC, P, res); } else mesh(b.faces, (t) => (isVert(t) ? (OC[edgeOrient(t)] || col('--o-x')) : roofC), res.dz, 1);
   S.blds.filter((o) => o !== b && o !== b.__orig && o !== b.__root).forEach((o) => mesh(o.faces, () => nbC, res.dz, 0.55));
   const rest = (b.__rest || (b.__orig && b.__orig.__rest)); if(rest && rest.length) mesh(rest, () => nbC, res.dz, 0.55);
@@ -5054,13 +5056,39 @@ function vcInfo(c){ const res = S.res; let bi = -1, bd = 0.6, bs = 0;
   return { edge: bi, e, s: bs, incR, sLeft: incR ? bs : e.L - bs }; }
 const TIP0 = 'Glisser une ligne rouge pour déplacer la coupe';
 function setCutMode(m){
-  if(!T3) return; T3.cutMode = T3.cutMode === m ? null : m; if(!T3.cutMode) ghostOff();
+  if(!T3) return; T3.cutMode = T3.cutMode === m ? null : m; if(!T3.cutMode) ghostOff(); if(T3.cutMode && T3.measMode){ T3.measMode = false; T3.meas = []; $('d3-meas').setAttribute('aria-pressed', 'false'); }
   $('d3-hcut').setAttribute('aria-pressed', T3.cutMode === 'h' ? 'true' : 'false'); $('d3-vcut').setAttribute('aria-pressed', T3.cutMode === 'v' ? 'true' : 'false');
   T3.r.domElement.style.cursor = T3.cutMode ? 'crosshair' : '';
   $('d3-tip').textContent = T3.cutMode === 'h' ? 'Coupe horizontale : cliquez sur une façade à la hauteur voulue (toutes les façades, pignon entier) ou sur un pan de toit (coupe parallèle à l\'égout) · glisser une ligne rouge pour la déplacer · Échap : terminer'
     : T3.cutMode === 'v' ? 'Coupe verticale : cliquez sur la façade à l\'endroit du changement (accroche aux angles et aux tableaux de fenêtres) ou sur un pan de toit (coupe dans le sens de la pente) · sélectionnée, T la relie à la toiture · glisser une ligne rouge pour la déplacer · Échap : terminer'
     : '';
 }
+// ---- mesurette : 2 clics sur le bâtiment (accroche aux sommets à 14 px), distance 3D, en plan et dénivelé
+function measMode(on){ if(!T3) return; T3.measMode = on == null ? !T3.measMode : on; if(T3.measMode && T3.cutMode) setCutMode(T3.cutMode);
+  $('d3-meas').setAttribute('aria-pressed', T3.measMode ? 'true' : 'false'); T3.r.domElement.style.cursor = T3.measMode ? 'crosshair' : '';
+  if(!T3.measMode){ T3.meas = []; build3D(); hint3(''); } else hint3('Mesurette : cliquez le 1er point (accroche aux angles) · Échap : effacer et quitter'); }
+function measClick(ev, rc){
+  const objs = [...(T3.pick || []), ...(T3.winPick || [])], hit = rc.intersectObjects(objs, false)[0]; if(!hit){ hint3('Mesurette : cliquez sur le bâtiment.'); return; }
+  let q = hit.point.clone(); const r = T3.r.domElement.getBoundingClientRect(), sx = ev.clientX - r.left, sy = ev.clientY - r.top; let bd = 14;
+  const pos = hit.object.geometry.attributes.position, v = new THREE.Vector3();
+  for(let i = 0; i < pos.count; i++){ v.fromBufferAttribute(pos, i).applyMatrix4(hit.object.matrixWorld); const w = v.clone().project(T3.cam), d = Math.hypot((w.x + 1) / 2 * r.width - sx, (-w.y + 1) / 2 * r.height - sy); if(d < bd){ bd = d; q = v.clone(); } }
+  const o = T3.o, A = [q.x + o[0], o[1] - q.z, q.y + o[2]], M = T3.meas = T3.meas || [];
+  if(!M.length || M[M.length - 1].b){ M.push({ a: A }); if(M.length > 6) M.shift(); build3D(); hint3('Mesurette : cliquez le 2e point.'); return; }
+  const m = M[M.length - 1]; m.b = A; build3D();
+  const dx = m.b[0] - m.a[0], dy = m.b[1] - m.a[1], dz = m.b[2] - m.a[2];
+  hint3(`Mesure : ${fmt(Math.hypot(dx, dy, dz))} m · en plan ${fmt(Math.hypot(dx, dy))} m · dénivelé ${fmt(Math.abs(dz))} m — cliquez pour une nouvelle mesure, Échap pour effacer.`); }
+function drawMeas(g, P){ (T3.meas || []).forEach((m) => {
+  const col = new THREE.Color('#e8590c'), pts = [m.a, m.b].filter(Boolean).map((p) => new THREE.Vector3(...P(p, 0)));
+  pts.forEach((v) => { const s = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshBasicMaterial({ color: col, depthTest: false })); s.position.copy(v); s.renderOrder = 10; g.add(s); });
+  if(pts.length < 2) return;
+  const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: col, depthTest: false })); ln.renderOrder = 10; g.add(ln);
+  const d = Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2]), cv = document.createElement('canvas'); cv.width = 256; cv.height = 64; const c = cv.getContext('2d');
+  c.fillStyle = 'rgba(255,255,255,0.92)'; c.fillRect(0, 8, 256, 48); c.strokeStyle = '#e8590c'; c.lineWidth = 3; c.strokeRect(1.5, 9.5, 253, 45);
+  c.font = '700 30px ' + css('--sans'); c.fillStyle = '#16201c'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(fmt(d) + ' m', 128, 33);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), depthTest: false, sizeAttenuation: false }));
+  sp.scale.set(0.085, 0.021, 1); sp.position.copy(pts[0].clone().add(pts[1]).multiplyScalar(0.5)); sp.renderOrder = 11; g.add(sp); }); }
+$('d3-meas').onclick = () => measMode();
+document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && T3 && T3.measMode && !$('t-3d').hidden) measMode(false); });
 $('d3-hcut').onclick = () => setCutMode('h'); $('d3-vcut').onclick = () => setCutMode('v');
 document.addEventListener('keydown', (e) => { if(e.key === 'Escape' && T3 && T3.cutMode && !$('t-3d').hidden) setCutMode(T3.cutMode); });
 const hint3 = (t) => { $('d3-tip').textContent = t; };
@@ -5759,6 +5787,7 @@ function pick3D(ev){
   const r = T3.r.domElement.getBoundingClientRect(), v = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   const rc = new THREE.Raycaster(); rc.setFromCamera(v, T3.cam);
   const hit = rc.intersectObjects(T3.pick, false)[0], k = hit && hit.object.userData.key;
+  if(T3.measMode){ measClick(ev, rc); return; }
   if(T3.cutMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) cutAt(hit, p); return; }
   const wh = T3.winPick && rc.intersectObjects(T3.winPick, false)[0];
   if(wh && (!hit || wh.distance <= hit.distance + 0.1)){ T3.wsel = wh.object.userData.win; T3.sel = []; T3.cutSel = null; renderWinPanel(); build3D();
@@ -6146,7 +6175,7 @@ function renderExtru(){
   items.forEach((x) => { const [c, f] = sty(x), cx = x.poly.reduce((a, p) => a + p[0], 0) / x.poly.length, cy = x.poly.reduce((a, p) => a + p[1], 0) / x.poly.length;
     s += `<polygon points="${poly(x.poly)}" fill="${f}" stroke="${c}" stroke-width="${(fs * 0.15).toFixed(3)}"${x.kind === 'ss' ? ` stroke-dasharray="${(fs * 0.5).toFixed(2)} ${(fs * 0.3).toFixed(2)}"` : ''}/>`;
     s += `<text x="${tx(cx)}" y="${ty(cy)}" font-size="${(fs * 1.1).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" fill="${c}" font-weight="700">${x.id}</text>`; });
-  s += `<polyline id="ex-pl" fill="rgba(168,85,247,0.12)" stroke="#a855f7" stroke-width="${(fs * 0.15).toFixed(3)}" points=""/><circle id="ex-cur" r="${(fs * 0.35).toFixed(3)}" fill="none" stroke="#a855f7" stroke-width="${(fs * 0.1).toFixed(3)}" cx="-99" cy="-99"/>`;
+  s += `<polyline id="ex-pl" fill="rgba(168,85,247,0.12)" stroke="#a855f7" stroke-width="${(fs * 0.15).toFixed(3)}" points=""/><text id="ex-len" font-size="${(fs * 0.8).toFixed(2)}" fill="#a855f7" font-weight="700" x="-99" y="-99" paint-order="stroke" stroke="#fff" stroke-width="${(fs * 0.15).toFixed(2)}"></text><circle id="ex-cur" r="${(fs * 0.35).toFixed(3)}" fill="none" stroke="#a855f7" stroke-width="${(fs * 0.1).toFixed(3)}" cx="-99" cy="-99"/>`;
   const sx = fs, sy = H - fs * 1.2;
   s += `<path d="M${sx} ${sy}h5" stroke="var(--ink)" stroke-width="${(fs * 0.14).toFixed(2)}"/><text x="${sx + 2.5}" y="${sy - fs * 0.5}" font-size="${(fs * 0.8).toFixed(2)}" text-anchor="middle">5 m</text></svg>`;
   box.innerHTML = s;
@@ -6162,7 +6191,8 @@ function renderExtru(){
     return { p: bq || p, snapped: !!bq }; };
   const redraw = (extra) => { const all = extra ? [...EX.pts, extra] : EX.pts; pl.setAttribute('points', all.map((q) => `${tx(q[0])},${ty(q[1])}`).join(' ')); };
   redraw();
-  svg.addEventListener('mousemove', (ev) => { if(!EX.on) return; const r = snap(toEN(ev), ev); cur.setAttribute('cx', tx(r.p[0])); cur.setAttribute('cy', ty(r.p[1])); cur.setAttribute('fill', r.snapped || r.close ? '#a855f7' : 'none'); redraw(r.p); });
+  svg.addEventListener('mousemove', (ev) => { if(!EX.on) return; const r = snap(toEN(ev), ev); cur.setAttribute('cx', tx(r.p[0])); cur.setAttribute('cy', ty(r.p[1])); cur.setAttribute('fill', r.snapped || r.close ? '#a855f7' : 'none'); redraw(r.p);
+    const lt = $('ex-len'), lp = EX.pts[EX.pts.length - 1]; if(lt){ if(lp){ lt.textContent = fmt(Math.hypot(r.p[0] - lp[0], r.p[1] - lp[1])) + ' m'; lt.setAttribute('x', tx((r.p[0] + lp[0]) / 2)); lt.setAttribute('y', ty((r.p[1] + lp[1]) / 2)); } else lt.setAttribute('x', -99); } });
   svg.addEventListener('click', (ev) => { if(!EX.on) return; ev.preventDefault(); const r = snap(toEN(ev), ev); if(r.close){ exFinish(); return; } EX.pts.push([r.p[0], r.p[1]]); redraw(); });
   // liste
   const zr = exZr();
