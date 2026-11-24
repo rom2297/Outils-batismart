@@ -333,7 +333,7 @@ body.noscroll{overflow:hidden}
         <button type="button" class="ghost sm" id="d3-pdf" title="PDF : une page par façade (élévation colorée à l'échelle + légende) et la vue 3D">⎙ Façades PDF</button>
         <button type="button" class="ghost sm" id="d3-max" title="Agrandir la vue 3D à toute la fenêtre (Échap pour revenir)">⛶ Plein écran</button>
         <button type="button" class="ghost sm" id="d3-dae" title="Fichier COLLADA (.dae) : Fichier › Importer dans SketchUp">Export SketchUp (.dae)</button>
-        <span class="note" id="d3-hint">Clic sur une paroi : tout l'élément CECB (même type, même orientation) · Alt + clic : un seul morceau · Maj + clic : plusieurs · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
+        <span class="note" id="d3-hint">Clic sur une paroi : un seul morceau · Ctrl (⌘) + clic : ajouter / retirer un morceau · Maj + clic : tout l'élément CECB · Suppr : supprimer la coupe ou la fenêtre sélectionnée, ou mettre la paroi hors enveloppe · glisser : tourner · clic droit : déplacer</span>
       </div>
       <div class="v3dwrap"><div class="v3d" id="v3d"><div class="empty" id="v3d-empty" style="padding-top:120px">La vue 3D apparaît après l'analyse d'un bâtiment.</div>
         <div class="d3edit" id="d3-edit" aria-live="polite"></div><div class="d3tip" id="d3-tip" aria-live="polite"></div></div>
@@ -4833,7 +4833,7 @@ function selInfo(){ const ks = (T3 && T3.sel) || []; return ks.map((k) => T3.dc 
 function renderDecomp(){
   const DC = T3 && T3.dc; if(!DC) return;
   const ps = selInfo(), box = $('d3-edit');
-  if(!ps.length){ box.innerHTML = `<div class="note">Cliquez un mur ou un pan de toit (Maj + clic : plusieurs).</div>
+  if(!ps.length){ box.innerHTML = `<div class="note">Cliquez un mur ou un pan de toit (Ctrl/⌘ + clic : plusieurs morceaux · Maj + clic : tout l'élément CECB).</div>
     <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">${DC.pieces.filter((p) => p.kind === 'plafond' || p.kind === 'sol').map((p) => `<button type="button" class="ghost sm" data-pick="${p.key}">${p.kind === 'sol' ? (/^S\|o/.test(p.key) ? 'Plancher sur l\'extérieur' : /^S\|b/.test(p.key) ? 'Sol partie accolée' : 'Sol / dalle') : /^P\|h/.test(p.key) ? 'Faux-plafond' : 'Plancher des combles'}</button>`).join('')}</div>`; }
   else {
     const kind = ps[0].kind === 'plafond' ? 'toit' : ps[0].kind, same = ps.every((p) => (p.kind === 'plafond' ? 'toit' : p.kind) === kind), A = ps.reduce((s, p) => s + p.area, 0);
@@ -4843,12 +4843,14 @@ function renderDecomp(){
       <label for="d3-name">Nom <span class="note">(même nom + même type + même orientation = une ligne CECB)</span></label>${nameSel(ps[0].zone, 'id="d3-name" style="width:100%;margin-bottom:6px"', !ps.every((p) => p.zone === ps[0].zone))}
       ${same ? `<label for="d3-type">Type CECB</label><select id="d3-type">${cur ? '' : '<option selected disabled>— plusieurs —</option>'}${opt(C.TYPES[ps[0].kind], cur)}</select>` : '<div class="note">Sélection mixte (murs / toits / sols) : choisissez des éléments du même genre.</div>'}
       <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
+        ${!oneLine && ln1 && ln1.keys.length > 1 && ps.every((p) => DC.lineOf.get(p.key) === ln1) ? `<button type="button" class="ghost sm" id="d3-line">Tout l'élément ${esc(ln1.code)} (${ln1.keys.length} morceaux)</button>` : ''}
         ${ps.length === 1 && ps[0].kind === 'mur' ? `<button type="button" class="ghost sm" id="d3-all">Toute la façade ${esc(ps[0].orientation)} (même partie)</button>` : ''}
         ${ps.length === 1 && ps[0].zone ? `<button type="button" class="ghost sm" id="d3-zone">Tous les murs « ${esc(ps[0].zone)} »</button>` : ''}
         <button type="button" class="ghost sm" id="d3-def">Type par défaut</button><button type="button" class="ghost sm" id="d3-clear">Désélectionner</button></div>`;
     if($('d3-type')) $('d3-type').onchange = (e) => setType(ps, e.target.value);
     $('d3-name').onchange = (e) => applyName(ps.map((p) => p.key), e.target.value);
     if($('d3-all')) $('d3-all').onclick = () => { const p = ps[0]; T3.sel = DC.pieces.filter((q) => q.kind === 'mur' && q.orientation === p.orientation && q.band === p.band && q.ter === p.ter && q.zone === p.zone).map((q) => q.key); build3D(); };
+    if($('d3-line')) $('d3-line').onclick = () => { T3.sel = ln1.keys.slice(); build3D(); };
     if($('d3-zone')) $('d3-zone').onclick = () => { const z = ps[0].zone; T3.sel = DC.pieces.filter((q) => q.kind === 'mur' && q.zone === z).map((q) => q.key); build3D(); };
     $('d3-def').onclick = () => { ps.forEach((p) => { delete (S.extra.adj || {})[p.key]; }); complementsChanged(); };
     $('d3-clear').onclick = () => { T3.sel = []; build3D(); };
@@ -5618,9 +5620,10 @@ function pick3D(ev){
     const f = (S.extra.fenetres || []).find((x) => x.uid === T3.wsel); if(f) hint3(`${f.type === 'Porte' ? 'Porte' : 'Fenêtre'} ${f.typeId || ''} ${fmt(f.l)} × ${fmt(f.h)} m (${f.facade}) sélectionnée — Suppr pour la supprimer${T3.winMode ? ', glisser pour la déplacer' : ''}`); return; }
   if(T3.winMode){ const p = k && T3.dc && T3.dc.byKey.get(k); if(p) wPlace(hit, p); return; }
   if(T3.cutSel || T3.wsel){ T3.cutSel = null; T3.wsel = null; hint3(''); }
-  if(!k){ if(!ev.shiftKey){ T3.sel = []; build3D(); } return; }
-  const ln = !ev.altKey && T3.dc && T3.dc.lineOf.get(k), ks = ln ? ln.keys.slice() : [k];      // clic = tout l'élément CECB ; Alt + clic = un seul morceau
-  const cur = T3.sel || []; T3.sel = ev.shiftKey ? (ks.every((x) => cur.includes(x)) ? cur.filter((x) => !ks.includes(x)) : [...new Set([...cur, ...ks])]) : ks;
+  const add = ev.ctrlKey || ev.metaKey || ev.shiftKey;
+  if(!k){ if(!add){ T3.sel = []; build3D(); } return; }
+  const ln = ev.shiftKey && T3.dc && T3.dc.lineOf.get(k), ks = ln ? ln.keys.slice() : [k];      // clic = un seul morceau ; Ctrl/Cmd + clic = ajouter/retirer un morceau ; Maj + clic = tout l'élément CECB
+  const cur = T3.sel || []; T3.sel = add ? (ks.every((x) => cur.includes(x)) ? cur.filter((x) => !ks.includes(x)) : [...new Set([...cur, ...ks])]) : ks;
   build3D();
 }
 
